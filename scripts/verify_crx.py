@@ -79,7 +79,13 @@ def parse_length_delimited_message(buf):
     return fields
 
 
-def compute_crx_id_from_pubkey(public_key_der):
+def compute_crx_id_bytes_from_pubkey(public_key_der):
+    """官方规范：crx_id = SHA256(public_key_der)[0:16] 原始 16 字节二进制"""
+    return hashlib.sha256(public_key_der).digest()[:16]
+
+
+def extension_id_string_from_pubkey(public_key_der):
+    """显示用 16 字符 a-p 字符串"""
     digest = hashlib.sha256(public_key_der).digest()
     return "".join(chr(ord("a") + (b & 0x0F)) for b in digest[:16])
 
@@ -138,26 +144,34 @@ def verify(crx_path):
 
     signed_header_data = signed_header_data_list[0]
 
-    # [3] crx_id 一致性
+    # [3] crx_id 一致性（官方规范：16 字节原始二进制比较）
     try:
         sd_fields = parse_length_delimited_message(signed_header_data)
-        crx_id_signed = sd_fields.get(1, [b""])[0].decode("ascii")
+        crx_id_signed = sd_fields.get(1, [b""])[0]  # 原始 bytes
     except Exception as e:
-        crx_id_signed = "<解析失败>"
-    crx_id_computed = compute_crx_id_from_pubkey(public_key_der)
+        crx_id_signed = None
+    crx_id_computed = compute_crx_id_bytes_from_pubkey(public_key_der)
     c3 = crx_id_signed == crx_id_computed
-    checks.append(("[3] crx_id 一致 (SignedData.crx_id == 派生ID)", c3,
-                   f"签名内={crx_id_signed!r} 派生={crx_id_computed!r}"))
+    ext_id_str = extension_id_string_from_pubkey(public_key_der)
+    checks.append(("[3] crx_id 一致 (16字节二进制)", c3,
+                   f"签名内={crx_id_signed!r} 派生={crx_id_computed!r} 扩展ID={ext_id_str!r}"))
     if not c3:
         ok = False
 
-    # [4] 签名验证：RSA-PKCS1v15-SHA256(signed_header_data || zip)
-    signed_input = signed_header_data + zip_bytes
+    # [4] 签名验证（官方规范）：
+    #     签名输入 = "CRX3 SignedData\x00" + uint32_le(len(signed_header_data))
+    #                + signed_header_data + zip
+    signed_input = (
+        b"CRX3 SignedData\x00"
+        + struct.pack("<I", len(signed_header_data))
+        + signed_header_data
+        + zip_bytes
+    )
     try:
         pub = serialization.load_der_public_key(public_key_der)
         pub.verify(signature, signed_input, padding.PKCS1v15(), hashes.SHA256())
         c4 = True
-        detail = "RSA-PKCS1v15-SHA256(signed_header_data||zip) 验证通过"
+        detail = "RSA-PKCS1v15-SHA256(CRX3前缀||header_data||zip) 验证通过"
     except InvalidSignature:
         c4 = False
         detail = "签名不匹配（INVALID SIGNATURE）"

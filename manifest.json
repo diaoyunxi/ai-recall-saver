@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI撤回保存器",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "捕获并保存 AI 网页版（DeepSeek、Kimi、通义千问、豆包、智谱清言、文心一言、腾讯元宝等）被撤回 / 重新生成 / 删除的回复消息，支持原位恢复查看与侧边历史浮层。纯内存存储，保护隐私。",
   "permissions": [
     "storage",
