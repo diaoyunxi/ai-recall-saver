@@ -21,7 +21,8 @@
     "https://chat.z.ai/*",
     "https://yiyan.baidu.com/*",
     "https://yuanbao.tencent.com/*",
-    "https://chat.zhipuai.cn/*"
+    "https://chat.zhipuai.cn/*",
+    "https://api.github.com/*"
   ],
   "background": {
     "service_worker": "background.js"
