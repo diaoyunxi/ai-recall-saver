@@ -1,19 +1,18 @@
 /**
- * AI撤回保存器 - 核心内容脚本
+ * AI撤回保存器 - 核心内容脚本 (v1.0.1 性能重构版)
  *
- * 工作原理：
- *  1. 根据站点配置定位对话根容器，挂载 MutationObserver（childList + subtree +
- *     characterData + attributes），实现"全量监听"。
- *  2. 同时以 ~600ms 节流轮询所有识别到的 AI 消息内容节点，在 WeakMap 中维护
- *     "最近一次确认内容快照"——这是捕获"覆盖/清空"类撤回的关键
- *     （MutationObserver 不提供旧值，必须主动留存）。
- *  3. 撤回判定：
- *       - 节点被从 DOM 移除            → 删除型撤回
- *       - 文本长度骤减（>70% 且原长>20）→ 覆盖/清空型撤回
- *       - 节点被隐藏(display/hidden)    → 隐藏型撤回
- *       - 点击"重新生成"按钮            → 重新生成型撤回（覆盖前保存）
- *  4. 命中后：保留前一快照 → 原位插入恢复块 → 写入内存记录 → 通知 background 更新角标。
- *  5. 纯内存存储（window 变量），刷新页面后清空，保护隐私。
+ * v1.0.0 的问题：
+ *  - 流式输出时 markdown 重渲染触发海量 childList 删除事件，被误判为"撤回"，
+ *    瞬间产生 99+ 假记录。
+ *  - 每个 mutation 同步 querySelectorAll 遍历整棵 DOM，阻塞主线程导致页面卡死。
+ *
+ * v1.0.1 修复要点：
+ *  1. 流式检测：内容持续增长 → 标记 streaming → 期间不判定撤回、不处理删除
+ *  2. 确认快照(confirmedSnapshots)：只在内容稳定 1.5s 后更新，作为撤回判定基准
+ *  3. 延迟确认删除：节点删除后等 600ms，若期间原位置出现等价内容(重渲染)则取消
+ *  4. mutation 批处理：debounce 300ms 批量处理，不逐条同步执行
+ *  5. content nodes 缓存：避免每次 querySelectorAll
+ *  6. observer 降级：去掉 characterData，只保留 childList + 必要 attributes
  *
  * 暴露 window.__AISaver__ 供 popup / 控制台调用。
  */
@@ -29,9 +28,19 @@
 
   const SITE = window.AISaverSites
     ? window.AISaverSites.getSiteConfig(location.hostname)
-    : { name: location.hostname, rootSelectors: ["main", "body"], messageSelectors: [], contentSelectors: [], assistantHints: [], regenerateSelectors: [], excludeSelectors: [] };
+    : {
+        name: location.hostname,
+        rootSelectors: ["main", "body"],
+        messageSelectors: [],
+        contentSelectors: [],
+        assistantHints: [],
+        regenerateSelectors: [],
+        excludeSelectors: []
+      };
 
-  // ---------- 工具函数 ----------
+  // ============================================================
+  // 工具函数
+  // ============================================================
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -43,7 +52,6 @@
     };
   }
 
-  // 简易字符串哈希（用于去重）
   function hashStr(s) {
     let h = 5381, i = s.length;
     while (i) h = (h * 33) ^ s.charCodeAt(--i);
@@ -74,61 +82,57 @@
     );
   }
 
-  // 判断节点是否应当被忽略（恢复块自身、输入框等）
   function shouldExclude(node) {
     if (!node || node.nodeType !== 1) return true;
     if (node.hasAttribute && node.hasAttribute("data-aisaver")) return true;
     if (node.id && node.id.indexOf("aisaver") === 0) return true;
     for (const sel of SITE.excludeSelectors) {
-      try {
-        if (node.matches && node.matches(sel)) return true;
-      } catch (e) {}
+      try { if (node.matches && node.matches(sel)) return true; } catch (e) {}
     }
     return false;
   }
 
-  // ---------- AI 消息节点识别 ----------
-  // 返回内容节点（markdown 渲染区）数组
-  function collectAIContentNodes() {
+  // ============================================================
+  // AI 消息节点识别 + 缓存
+  // ============================================================
+  let cachedContentNodes = null;
+  let cacheInvalidAt = 0;
+
+  function collectAIContentNodes(force) {
+    // 缓存 800ms，避免高频调用
+    const now = Date.now();
+    if (!force && cachedContentNodes && now < cacheInvalidAt) return cachedContentNodes;
+
     const out = [];
     const seen = new Set();
 
-    // 1. 用站点 contentSelectors 直接命中
     for (const sel of SITE.contentSelectors) {
       let nodes = [];
       try { nodes = $$(sel); } catch (e) { continue; }
       for (const n of nodes) {
         if (seen.has(n) || shouldExclude(n)) continue;
-        if (looksLikeAssistantContent(n)) {
-          seen.add(n);
-          out.push(n);
-        }
+        if (looksLikeAssistantContent(n)) { seen.add(n); out.push(n); }
       }
     }
-    // 2. 用 messageSelectors 命中消息项，再在其内部找内容
     if (out.length === 0) {
       for (const sel of SITE.messageSelectors) {
         let items = [];
         try { items = $$(sel); } catch (e) { continue; }
         for (const item of items) {
-          if (shouldExclude(item)) continue;
-          if (!looksLikeAssistantMessage(item)) continue;
-          // 在 item 内找最长文本块作为内容节点
+          if (shouldExclude(item) || !looksLikeAssistantMessage(item)) continue;
           const inner = findLongestTextBlock(item);
-          if (inner && !seen.has(inner)) {
-            seen.add(inner);
-            out.push(inner);
-          }
+          if (inner && !seen.has(inner)) { seen.add(inner); out.push(inner); }
         }
       }
     }
+    cachedContentNodes = out;
+    cacheInvalidAt = now + 800;
     return out;
   }
 
   function looksLikeAssistantContent(node) {
     const text = (node.textContent || "").trim();
     if (text.length < 5) return false;
-    // 排除输入框
     const tag = node.tagName;
     if (tag === "TEXTAREA" || tag === "INPUT") return false;
     if (node.isContentEditable) return false;
@@ -140,7 +144,6 @@
     for (const h of SITE.assistantHints) {
       if (cls.indexOf(h.toLowerCase()) >= 0) return true;
     }
-    // 启发式：item 内含 markdown 容器且文本较长
     for (const sel of SITE.contentSelectors) {
       try {
         if (item.querySelector && item.querySelector(sel)) {
@@ -156,18 +159,50 @@
     const walk = (el) => {
       if (shouldExclude(el)) return;
       const t = (el.textContent || "").trim();
-      if (t.length > bestLen && el.children.length < 50) {
-        bestLen = t.length; best = el;
-      }
+      if (t.length > bestLen && el.children.length < 50) { bestLen = t.length; best = el; }
       for (const c of el.children) walk(c);
     };
     walk(root);
     return best;
   }
 
-  // ---------- 快照管理 ----------
-  // WeakMap: contentNode -> { text, html, ts }
-  const snapshots = new WeakMap();
+  function isContentLike(node) {
+    if (!node || node.nodeType !== 1) return false;
+    const cls = (node.className && node.className.toString().toLowerCase()) || "";
+    if (cls.indexOf("markdown") >= 0) return true;
+    for (const sel of SITE.contentSelectors) {
+      try { if (node.matches && node.matches(sel)) return true; } catch (e) {}
+    }
+    return false;
+  }
+
+  function collectAIContentNodesIn(root) {
+    const out = [];
+    if (!root || !root.querySelectorAll) return out;
+    for (const sel of SITE.contentSelectors) {
+      let nodes = [];
+      try { nodes = Array.from(root.querySelectorAll(sel)); } catch (e) { continue; }
+      for (const n of nodes) {
+        if (!shouldExclude(n) && looksLikeAssistantContent(n)) out.push(n);
+      }
+    }
+    if (out.length === 0 && root.nodeType === 1 && (root.textContent || "").trim().length > 30 && !shouldExclude(root)) {
+      out.push(root);
+    }
+    return out;
+  }
+
+  // ============================================================
+  // 快照 + 流式检测
+  // ============================================================
+  // confirmedSnapshots: 只在内容稳定后更新，是撤回判定的基准
+  const confirmedSnapshots = new WeakMap();
+  // streamingSnapshots: 流式期间实时更新，用于检测何时停止
+  const streamingSnapshots = new WeakMap();
+
+  let isStreaming = false;
+  let streamingTimer = null;
+  let lastTotalLength = 0;
 
   function takeSnapshot(node) {
     return {
@@ -177,30 +212,167 @@
     };
   }
 
-  const pollSnapshots = debounce(function () {
+  // 检测流式输出：内容总长度增长 → streaming
+  function detectStreaming() {
     const nodes = collectAIContentNodes();
+    let totalLen = 0;
+    for (const n of nodes) totalLen += (n.textContent || "").trim().length;
+
+    if (totalLen > lastTotalLength + 5) {
+      // 内容在增长 → 流式中
+      if (!isStreaming) {
+        isStreaming = true;
+      }
+      // 更新流式快照
+      for (const n of nodes) {
+        streamingSnapshots.set(n, takeSnapshot(n));
+      }
+      // 重置稳定计时器
+      clearTimeout(streamingTimer);
+      streamingTimer = setTimeout(onStreamStable, 1500);
+    }
+    lastTotalLength = totalLen;
+  }
+
+  // 流式结束：将流式期间的最新快照"确认"为基准
+  function onStreamStable() {
+    isStreaming = false;
+    const nodes = collectAIContentNodes(true);
     for (const n of nodes) {
-      const prev = snapshots.get(n);
-      const cur = takeSnapshot(n);
-      // 仅当内容增长或变化时更新（保留"最近确认版本"用于覆盖检测）
-      if (!prev || cur.text.length >= prev.text.length || hashStr(cur.text) !== hashStr(prev.text)) {
-        snapshots.set(n, cur);
+      // 关键：用流式期间的最新版本（streamingSnapshots）作为确认快照，
+      // 而非当前可能已骤减的内容。这样才能检测到"流式增长后被撤回"。
+      const streamSnap = streamingSnapshots.get(n);
+      if (streamSnap) {
+        confirmedSnapshots.set(n, streamSnap);
+      } else {
+        confirmedSnapshots.set(n, takeSnapshot(n));
       }
     }
-  }, 600);
+    // 检查是否在稳定期间发生了骤减（真正的覆盖/撤回）
+    checkContentRecall();
+  }
 
-  // 定时轮询（兜底，确保流式输出期间也有较新快照）
-  setInterval(pollSnapshots, 1500);
+  // ============================================================
+  // 撤回判定
+  // ============================================================
 
-  // ---------- 记录存储（内存） ----------
+  // 内容覆盖/清空判定（非流式时）
+  function checkContentRecall() {
+    if (isStreaming) return;
+    const nodes = collectAIContentNodes();
+    for (const n of nodes) {
+      const confirmed = confirmedSnapshots.get(n);
+      if (!confirmed) continue;
+      const curText = (n.textContent || "").trim();
+      // 骤减判定：确认快照长，当前极短
+      if (confirmed.text.length >= 20 && curText.length < confirmed.text.length * 0.3) {
+        if (addRecord("replace", confirmed)) {
+          insertRestoreBlock(n.parentElement || n, n.nextSibling, confirmed, "内容被覆盖/清空");
+        }
+        // 更新为当前内容，避免重复触发
+        confirmedSnapshots.set(n, takeSnapshot(n));
+      } else if (curText.length >= confirmed.text.length) {
+        // 内容没减少，更新确认快照
+        confirmedSnapshots.set(n, takeSnapshot(n));
+      }
+    }
+  }
+
+  // 节点删除：延迟确认
+  const pendingRemovals = new Map(); // key=hash(text) -> { snap, timer, parentNode, nextSibling }
+
+  function handleRemovedNode(node, parent, nextSibling) {
+    // 流式期间忽略删除（React 重渲染导致的大量删除）
+    if (isStreaming) return;
+
+    // 找到该节点对应的"确认快照"
+    let snap = confirmedSnapshots.get(node);
+    if (!snap) {
+      // 节点本身不是快照目标，检查其内部是否含快照内容
+      const inner = collectAIContentNodesIn(node);
+      if (inner.length === 0) return;
+      snap = confirmedSnapshots.get(inner[0]) || takeSnapshot(inner[0]);
+      if (!snap.text || snap.text.length < 3) return;
+    }
+    if (snap.text.length < 3) return;
+
+    const key = hashStr(snap.text);
+    // 已有相同内容待确认 → 跳过
+    if (pendingRemovals.has(key)) return;
+
+    // 延迟 600ms 确认：若期间原位置出现等价内容(重渲染)，则取消
+    const timer = setTimeout(() => {
+      pendingRemovals.delete(key);
+      // 确认：检查页面是否仍有高度相似的内容（重渲染后新节点已就位）
+      if (pageStillHasSimilarContent(snap.text)) {
+        // 重渲染，非撤回，丢弃
+        return;
+      }
+      // 确认撤回
+      if (addRecord("remove", snap)) {
+        insertRestoreBlock(parent, nextSibling, snap, "节点被删除");
+      }
+    }, 600);
+    pendingRemovals.set(key, { snap, timer });
+  }
+
+  // 检查页面是否仍有高度相似内容（用于判断是否为重渲染而非撤回）
+  function pageStillHasSimilarContent(text) {
+    const nodes = collectAIContentNodes(true);
+    const targetLen = text.length;
+    for (const n of nodes) {
+      const cur = (n.textContent || "").trim();
+      // 长度相近且前缀匹配（重渲染内容基本一致）
+      if (cur.length >= targetLen * 0.85 && cur.slice(0, 50) === text.slice(0, 50)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 新增节点：可能取消待确认的删除（重渲染场景）
+  function handleAddedNode(node) {
+    if (pendingRemovals.size === 0) return;
+    const inner = isContentLike(node) ? [node] : collectAIContentNodesIn(node);
+    for (const n of inner) {
+      const cur = (n.textContent || "").trim();
+      if (cur.length < 10) continue;
+      const key = hashStr(cur);
+      const pending = pendingRemovals.get(key);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingRemovals.delete(key);
+      }
+    }
+  }
+
+  // 隐藏判定
+  function handleHide(el) {
+    if (isStreaming) return;
+    const hidden =
+      getComputedStyle(el).display === "none" ||
+      getComputedStyle(el).visibility === "hidden" ||
+      el.hidden ||
+      el.getAttribute("aria-hidden") === "true";
+    if (!hidden) return;
+    const contentNodes = collectAIContentNodesIn(el);
+    for (const cn of contentNodes) {
+      const snap = confirmedSnapshots.get(cn);
+      if (!snap || snap.text.length < 3) continue;
+      addRecord("hide", snap);
+    }
+  }
+
+  // ============================================================
+  // 记录存储（内存）
+  // ============================================================
   function addRecord(reason, snapshot, extra) {
     if (!snapshot || (!snapshot.text && !snapshot.html)) return false;
     const text = snapshot.text || "";
-    if (text.length < 3) return false; // 过滤空/极短
+    if (text.length < 3) return false;
     const id = hashStr(text) + "_" + snapshot.ts;
-    // 去重：3 秒内同内容不重复记录
     const now = Date.now();
-    if (STORE.records.some(r => r.id === id && now - r.capturedAt < 3000)) return false;
+    if (STORE.records.some((r) => r.id === id && now - r.capturedAt < 3000)) return false;
     const record = {
       id,
       site: SITE.name,
@@ -213,12 +385,14 @@
       preview: truncate(text, 120)
     };
     STORE.records.unshift(record);
-    if (STORE.records.length > 500) STORE.records.length = 500; // 上限保护
+    if (STORE.records.length > 500) STORE.records.length = 500;
     onNewRecord(record);
     return true;
   }
 
-  // ---------- 原位恢复 ----------
+  // ============================================================
+  // 原位恢复
+  // ============================================================
   function insertRestoreBlock(parentNode, nextSibling, snapshot, reason) {
     if (!parentNode || !snapshot) return;
     const dark = isDarkMode();
@@ -250,7 +424,9 @@
     } catch (e) {}
   }
 
-  // ---------- Toast ----------
+  // ============================================================
+  // Toast / UI
+  // ============================================================
   function showToast(msg) {
     const old = $(".aisaver-toast");
     if (old) old.remove();
@@ -261,12 +437,10 @@
     setTimeout(() => t.remove(), 2200);
   }
 
-  // ---------- 悬浮按钮 + 侧边浮层 ----------
   let fab, panelRoot, panelEl, listEl, badgeEl, panelOpen = false;
 
   function ensureUI() {
     if (fab) return;
-    // FAB
     fab = document.createElement("button");
     fab.id = "aisaver-fab";
     fab.title = "AI撤回保存器 - 查看历史";
@@ -275,7 +449,6 @@
     fab.addEventListener("click", togglePanel);
     document.body.appendChild(fab);
 
-    // Panel root
     panelRoot = document.createElement("div");
     panelRoot.id = "aisaver-panel-root";
     panelRoot.innerHTML = `
@@ -310,8 +483,7 @@
 
   function applyDark() {
     if (!panelEl) return;
-    const dark = isDarkMode();
-    panelEl.classList.toggle("aisaver-dark", dark);
+    panelEl.classList.toggle("aisaver-dark", isDarkMode());
   }
 
   function openPanel(open) {
@@ -345,7 +517,6 @@
           <a data-act="html">查看HTML</a>
         </div>
       </div>`).join("");
-    // 绑定事件
     listEl.querySelectorAll(".aisaver-item").forEach((item) => {
       const id = item.getAttribute("data-id");
       const r = STORE.records.find((x) => x.id === id);
@@ -366,12 +537,7 @@
   }
 
   function reasonLabel(reason) {
-    return ({
-      remove: "节点被删除",
-      replace: "内容被覆盖/清空",
-      hide: "节点被隐藏",
-      regenerate: "重新生成覆盖"
-    })[reason] || reason;
+    return ({ remove: "节点被删除", replace: "内容被覆盖/清空", hide: "节点被隐藏", regenerate: "重新生成覆盖" })[reason] || reason;
   }
 
   function showFullText(r, asHtml) {
@@ -410,9 +576,7 @@
       badgeEl.textContent = n > 99 ? "99+" : n;
       badgeEl.style.display = n > 0 ? "" : "none";
     }
-    try {
-      chrome.runtime.sendMessage({ type: "UPDATE_BADGE", count: n });
-    } catch (e) {}
+    try { chrome.runtime.sendMessage({ type: "UPDATE_BADGE", count: n }); } catch (e) {}
   }
 
   function onNewRecord(record) {
@@ -421,114 +585,89 @@
     showToast(`捕获到一条撤回消息（${reasonLabel(record.reason)}）`);
   }
 
-  // ---------- 撤回检测核心 ----------
-  function handleMutations(mutations) {
-    for (const m of mutations) {
-      // 1. 节点删除
-      if (m.type === "childList" && m.removedNodes && m.removedNodes.length) {
-        for (const node of m.removedNodes) {
-          if (node.nodeType !== 1 || shouldExclude(node)) continue;
-          handleRemovedNode(node, m);
+  // ============================================================
+  // MutationObserver（批处理 + 降级监听）
+  // ============================================================
+  // 收集 mutations，批量处理
+  let pendingMutations = [];
+  let processingScheduled = false;
+
+  function scheduleProcess() {
+    if (processingScheduled) return;
+    processingScheduled = true;
+    setTimeout(processPendingMutations, 300);
+  }
+
+  function processPendingMutations() {
+    processingScheduled = false;
+    const muts = pendingMutations;
+    pendingMutations = [];
+    if (muts.length === 0) return;
+
+    // 1. 流式检测（每次都做，轻量）
+    detectStreaming();
+
+    // 2. 流式期间不进行撤回判定
+    if (isStreaming) return;
+
+    // 3. 处理删除/新增/隐藏
+    for (const m of muts) {
+      if (m.type === "childList") {
+        if (m.removedNodes && m.removedNodes.length) {
+          for (const node of m.removedNodes) {
+            if (node.nodeType !== 1 || shouldExclude(node)) continue;
+            handleRemovedNode(node, m.target, m.nextSibling);
+          }
         }
-      }
-      // 2. 文本变化（覆盖/清空）
-      if (m.type === "characterData") {
-        const target = m.target && m.target.parentElement;
-        if (target && !shouldExclude(target)) {
-          handleContentChange(target);
+        if (m.addedNodes && m.addedNodes.length) {
+          for (const node of m.addedNodes) {
+            if (node.nodeType !== 1 || shouldExclude(node)) continue;
+            handleAddedNode(node);
+          }
         }
-      }
-      // 3. 子树 childList 变化（内容被替换）
-      if (m.type === "childList" && m.addedNodes && m.addedNodes.length && m.target) {
-        if (!shouldExclude(m.target)) handleContentChange(m.target);
-      }
-      // 4. 属性变化（隐藏）
-      if (m.type === "attributes" && m.attributeName) {
+      } else if (m.type === "attributes" && m.attributeName) {
         if (m.attributeName === "style" || m.attributeName === "class" || m.attributeName === "hidden" || m.attributeName === "aria-hidden") {
-          const el = m.target;
-          if (el && el.nodeType === 1 && !shouldExclude(el)) handleHide(el);
+          if (m.target && m.target.nodeType === 1 && !shouldExclude(m.target)) handleHide(m.target);
         }
       }
     }
+
+    // 4. 内容覆盖检测（非流式时）
+    checkContentRecall();
+
+    // 5. 刷新缓存（DOM 已变化）
+    cachedContentNodes = null;
+
+    // 6. 重新绑定重新生成按钮
+    bindRegenerateButtons();
   }
 
-  function handleRemovedNode(node, mutation) {
-    // 判断被删除的节点是否是 AI 消息内容（或包含 AI 消息内容）
-    let contentNodes = [];
-    if (isContentLike(node)) contentNodes.push(node);
-    else contentNodes = collectAIContentNodesIn(node);
-
-    if (contentNodes.length === 0) return;
-    for (const cn of contentNodes) {
-      const snap = snapshots.get(cn) || takeSnapshot(cn);
-      if (!snap.text || snap.text.length < 3) continue;
-      addRecord("remove", snap);
-      // 原位恢复：插入到原父节点的原位置
-      const parent = mutation.target;
-      insertRestoreBlock(parent, mutation.nextSibling, snap, "节点被删除");
+  let observer = null;
+  function observeRoot() {
+    if (observer) { try { observer.disconnect(); } catch (e) {} }
+    let root = null;
+    for (const sel of SITE.rootSelectors) {
+      try { root = $(sel); } catch (e) { continue; }
+      if (root) break;
     }
+    if (!root) root = document.body;
+    observer = new MutationObserver((muts) => {
+      pendingMutations = pendingMutations.concat(muts);
+      scheduleProcess();
+    });
+    // 降级监听：去掉 characterData，只保留 childList + 关键 attributes
+    // characterData 在流式输出时每字符触发一次，是性能杀手
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class", "hidden", "aria-hidden"]
+    });
   }
 
-  function handleContentChange(target) {
-    // target 可能是消息项或内容节点；向上/向下找内容节点
-    const contentNodes = isContentLike(target) ? [target] : collectAIContentNodesIn(target);
-    for (const cn of contentNodes) {
-      const prev = snapshots.get(cn);
-      if (!prev) continue;
-      const curText = (cn.textContent || "").trim();
-      // 覆盖/清空判定：当前很短，之前较长，且长度大幅减少
-      if (prev.text.length >= 20 && curText.length < prev.text.length * 0.3) {
-        if (addRecord("replace", prev)) {
-          // 在该内容节点附近插入恢复块
-          insertRestoreBlock(cn.parentElement || cn, cn.nextSibling, prev, "内容被覆盖/清空");
-        }
-      }
-    }
-  }
-
-  function handleHide(el) {
-    const hidden =
-      getComputedStyle(el).display === "none" ||
-      getComputedStyle(el).visibility === "hidden" ||
-      el.hidden ||
-      el.getAttribute("aria-hidden") === "true";
-    if (!hidden) return;
-    const contentNodes = collectAIContentNodesIn(el);
-    for (const cn of contentNodes) {
-      const snap = snapshots.get(cn);
-      if (!snap || snap.text.length < 3) continue;
-      addRecord("hide", snap);
-    }
-  }
-
-  function isContentLike(node) {
-    if (!node || node.nodeType !== 1) return false;
-    const cls = (node.className && node.className.toString().toLowerCase()) || "";
-    if (cls.indexOf("markdown") >= 0) return true;
-    for (const sel of SITE.contentSelectors) {
-      try { if (node.matches && node.matches(sel)) return true; } catch (e) {}
-    }
-    return false;
-  }
-
-  function collectAIContentNodesIn(root) {
-    const out = [];
-    if (!root || !root.querySelectorAll) return out;
-    for (const sel of SITE.contentSelectors) {
-      let nodes = [];
-      try { nodes = Array.from(root.querySelectorAll(sel)); } catch (e) { continue; }
-      for (const n of nodes) {
-        if (!shouldExclude(n) && looksLikeAssistantContent(n)) out.push(n);
-      }
-    }
-    // 若没有命中 contentSelectors，但 root 本身含较长文本，则视作内容
-    if (out.length === 0 && root.nodeType === 1 && (root.textContent || "").trim().length > 30 && !shouldExclude(root)) {
-      out.push(root);
-    }
-    return out;
-  }
-
-  // ---------- 重新生成按钮监听 ----------
+  // ============================================================
+  // 重新生成按钮监听
+  // ============================================================
   function bindRegenerateButtons() {
     for (const sel of SITE.regenerateSelectors) {
       let btns = [];
@@ -540,49 +679,25 @@
       }
     }
   }
-  const bindRegenerateDebounced = debounce(bindRegenerateButtons, 800);
 
   function onRegenerateClick() {
-    // 覆盖前保存当前最后一条 AI 消息
-    const nodes = collectAIContentNodes();
+    const nodes = collectAIContentNodes(true);
     if (nodes.length === 0) return;
     const last = nodes[nodes.length - 1];
-    const snap = snapshots.get(last) || takeSnapshot(last);
+    const snap = confirmedSnapshots.get(last) || streamingSnapshots.get(last) || takeSnapshot(last);
     if (snap.text && snap.text.length > 3) {
       addRecord("regenerate", snap);
     }
   }
 
-  // ---------- 观察器挂载 ----------
-  let observer = null;
-  function observeRoot() {
-    if (observer) { try { observer.disconnect(); } catch (e) {} }
-    let root = null;
-    for (const sel of SITE.rootSelectors) {
-      try { root = $(sel); } catch (e) { continue; }
-      if (root) break;
-    }
-    if (!root) root = document.body;
-    observer = new MutationObserver((muts) => {
-      handleMutations(muts);
-      pollSnapshots();
-      bindRegenerateDebounced();
-    });
-    observer.observe(root, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ["style", "class", "hidden", "aria-hidden"]
-    });
-  }
-
-  // ---------- 通信 ----------
+  // ============================================================
+  // 通信
+  // ============================================================
   try {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!msg) return;
       if (msg.type === "GET_RECORDS") {
-        sendResponse({ records: STORE.records, site: SITE.name, url: location.href });
+        sendResponse({ records: STORE.records, site: SITE.name, url: location.href, streaming: isStreaming });
         return;
       }
       if (msg.type === "TOGGLE_PANEL") {
@@ -592,7 +707,7 @@
         return;
       }
       if (msg.type === "PING") {
-        sendResponse({ ok: true, site: SITE.name, count: STORE.records.length });
+        sendResponse({ ok: true, site: SITE.name, count: STORE.records.length, streaming: isStreaming });
         return;
       }
       if (msg.type === "CLEAR_RECORDS") {
@@ -610,27 +725,48 @@
     });
   } catch (e) {}
 
-  // ---------- 初始化 ----------
+  // ============================================================
+  // 初始化
+  // ============================================================
   function init() {
     ensureUI();
     observeRoot();
-    pollSnapshots();
+    // 初始确认快照
+    const nodes = collectAIContentNodes(true);
+    for (const n of nodes) confirmedSnapshots.set(n, takeSnapshot(n));
+    lastTotalLength = nodes.reduce((s, n) => s + (n.textContent || "").trim().length, 0);
     bindRegenerateButtons();
     updateBadge();
+    // 定时刷新确认快照（兜底，确保非流式状态也有最新快照）
+    setInterval(() => {
+      if (!isStreaming) {
+        const ns = collectAIContentNodes(true);
+        let len = 0;
+        for (const n of ns) {
+          len += (n.textContent || "").trim().length;
+          // 只更新更长或相等的，避免覆盖
+          const prev = confirmedSnapshots.get(n);
+          const cur = takeSnapshot(n);
+          if (!prev || cur.text.length >= prev.text.length) {
+            confirmedSnapshots.set(n, cur);
+          }
+        }
+        lastTotalLength = len;
+      }
+    }, 3000);
     // SPA 路由切换后重新挂载
     let lastUrl = location.href;
     setInterval(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
+        cachedContentNodes = null;
         setTimeout(observeRoot, 600);
       }
     }, 1000);
-    // 通知 background 已就绪
     try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
-    console.log(`[AI撤回保存器] 已在 ${SITE.name} (${location.hostname}) 启动，监听撤回/重新生成/删除的 AI 回复。`);
+    console.log(`[AI撤回保存器 v1.0.1] 已在 ${SITE.name} (${location.hostname}) 启动。流式检测已启用，性能已优化。`);
   }
 
-  // document_idle 后启动
   if (document.readyState === "complete" || document.readyState === "interactive") {
     setTimeout(init, 300);
   } else {
