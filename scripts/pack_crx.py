@@ -99,33 +99,67 @@ def load_or_create_key():
     return key
 
 
+# ---------- 扩展 ID（crx_id）计算 ----------
+# crx_id = SHA256(public_key_der)[0:16]，每个字节取低 4 位映射到 'a'..'p'
+def compute_crx_id(public_key_der):
+    digest = hashlib.sha256(public_key_der).digest()
+    chars = []
+    for b in digest[:16]:
+        chars.append(chr(ord("a") + (b & 0x0F)))
+    return "".join(chars)
+
+
+# 向后兼容的别名
+def extension_id(public_key_der):
+    return compute_crx_id(public_key_der)
+
+
 # ---------- 构造 CRX3 ----------
+# 严格遵循 Chromium CRX3 格式（参考 chromium src/components/crx_file/crx_file.cc）：
+#
+#   message SignedData {
+#     string crx_id = 1;            // 从公钥派生的 16 位 ID（a-p）
+#   }
+#   message AsymmetricKeyProof {
+#     bytes public_key = 1;         // SubjectPublicKeyInfo DER
+#     bytes signature = 2;          // RSA-PKCS1v15-SHA256
+#   }
+#   message CrxFileHeader {
+#     repeated AsymmetricKeyProof sha256_with_rsa = 2;
+#     repeated AsymmetricKeyProof sha256_with_ecdsa = 3;
+#     bytes signed_header_data = 10000;   // 序列化后的 SignedData
+#   }
+#
+# 签名输入 = signed_header_data_bytes || zip_archive   （两者拼接）
+# 即：signature = RSA-Sign(SHA256(signed_header_data || zip))
+#
+# 之前版本遗漏了 signed_header_data 字段且签名仅覆盖 zip，导致 Chrome
+# 校验器判定「证明缺失」。此版本补全该字段并修正签名范围。
 def build_crx3(zip_bytes, private_key):
     public_key = private_key.public_key()
     public_key_der = public_key.public_bytes(
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    # 对 zip archive 做 SHA256 + RSA PKCS1v15 签名
-    signature = private_key.sign(zip_bytes, padding.PKCS1v15(), hashes.SHA256())
 
-    # AsymmetricKeyProof { bytes public_key = 1; bytes signature = 2; }
+    # 1) 构造 signed_header_data：序列化 SignedData { string crx_id = 1; }
+    crx_id = compute_crx_id(public_key_der)
+    signed_data_msg = encode_field(1, 2, crx_id.encode("ascii"))  # SignedData 的字节
+    # signed_header_data 字段存的就是 SignedData 序列化后的原始字节
+    signed_header_data = signed_data_msg
+
+    # 2) 计算签名：输入 = signed_header_data || zip_bytes
+    signed_input = signed_header_data + zip_bytes
+    signature = private_key.sign(signed_input, padding.PKCS1v15(), hashes.SHA256())
+
+    # 3) AsymmetricKeyProof { bytes public_key = 1; bytes signature = 2; }
     proof = encode_field(1, 2, public_key_der) + encode_field(2, 2, signature)
-    # CrxFileHeader { repeated AsymmetricKeyProof sha256_with_rsa = 2; }
-    header = encode_field(2, 2, proof)
+
+    # 4) CrxFileHeader { ... sha256_with_rsa = 2; ... signed_header_data = 10000; }
+    header = encode_field(2, 2, proof) + encode_field(10000, 2, signed_header_data)
 
     crx = b"Cr24" + struct.pack("<I", 3) + struct.pack("<I", len(header)) + header + zip_bytes
-    return crx, public_key_der
-
-
-# ---------- 扩展 ID 计算 ----------
-def extension_id(public_key_der):
-    digest = hashlib.sha256(public_key_der).digest()
-    # 取前 16 字节，映射到 a-p
-    chars = []
-    for b in digest[:16]:
-        chars.append(chr(ord("a") + (b & 0x0F)))
-    return "".join(chars)
+    return crx, public_key_der, crx_id
 
 
 def main():
@@ -143,8 +177,8 @@ def main():
     zip_bytes = make_zip(files)
 
     private_key = load_or_create_key()
-    crx_bytes, public_key_der = build_crx3(zip_bytes, private_key)
-    ext_id = extension_id(public_key_der)
+    crx_bytes, public_key_der, crx_id = build_crx3(zip_bytes, private_key)
+    ext_id = crx_id
 
     safe_name = "ai-recall-saver"
     zip_path = os.path.join(DIST_DIR, f"{safe_name}-v{version}.zip")
