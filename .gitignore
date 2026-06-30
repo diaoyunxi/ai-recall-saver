@@ -1,0 +1,17 @@
+# 依赖与构建产物
+dist/
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# CRX 私钥（保密，勿提交）
+scripts/crx_key.pem
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

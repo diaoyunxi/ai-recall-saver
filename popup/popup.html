@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI撤回保存器</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="header">
+    <div class="title">
+      <span class="logo">🛡</span>
+      <span>AI撤回保存器</span>
+    </div>
+    <span class="version" id="version">v1.0.0</span>
+  </div>
+
+  <div class="status" id="status">
+    <div class="status-row">
+      <span class="label">当前站点</span>
+      <span class="value" id="siteName">检测中…</span>
+    </div>
+    <div class="status-row">
+      <span class="label">撤回记录</span>
+      <span class="value count" id="count">0</span>
+    </div>
+    <div class="status-row">
+      <span class="label">监听状态</span>
+      <span class="value ok" id="monitor">运行中</span>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="btnPanel" class="primary">📋 查看撤回历史</button>
+    <button id="btnRefresh">🔄 刷新</button>
+    <button id="btnClear">🗑 清空记录</button>
+    <button id="btnExport">⬇ 导出JSON</button>
+  </div>
+
+  <div class="update" id="update" style="display:none">
+    <div class="update-title">🆕 发现新版本 <span id="newVer"></span></div>
+    <a id="updateLink" target="_blank" rel="noopener">前往下载更新</a>
+  </div>
+
+  <div class="footer">
+    <span>纯内存存储 · 刷新页面后清空</span>
+    <a id="about" target="_blank" rel="noopener">关于</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

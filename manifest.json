@@ -1,0 +1,81 @@
+{
+  "manifest_version": 3,
+  "name": "AI撤回保存器",
+  "version": "1.0.0",
+  "description": "捕获并保存 AI 网页版（DeepSeek、Kimi、通义千问、豆包、智谱清言、文心一言、腾讯元宝等）被撤回 / 重新生成 / 删除的回复消息，支持原位恢复查看与侧边历史浮层。纯内存存储，保护隐私。",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "notifications",
+    "contextMenus",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://chat.deepseek.com/*",
+    "https://kimi.moonshot.cn/*",
+    "https://kimi.com/*",
+    "https://tongyi.aliyun.com/*",
+    "https://www.doubao.com/*",
+    "https://chatglm.cn/*",
+    "https://chat.z.ai/*",
+    "https://yiyan.baidu.com/*",
+    "https://yuanbao.tencent.com/*",
+    "https://chat.zhipuai.cn/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "AI撤回保存器 - 点击查看撤回历史",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.deepseek.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://kimi.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://www.doubao.com/*",
+        "https://chatglm.cn/*",
+        "https://chat.z.ai/*",
+        "https://yiyan.baidu.com/*",
+        "https://yuanbao.tencent.com/*",
+        "https://chat.zhipuai.cn/*"
+      ],
+      "js": [
+        "content/sites.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/content.css",
+        "icons/icon48.png"
+      ],
+      "matches": [
+        "https://*/*"
+      ]
+    }
+  ]
+}
