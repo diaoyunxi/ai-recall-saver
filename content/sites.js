@@ -302,9 +302,13 @@
   function getSiteConfig(hostname) {
     const exact = SITES[hostname];
     if (!exact) {
+      // 未知站点：使用通用兜底配置
       return Object.assign({ key: "fallback", hostname }, FALLBACK);
     }
-    return Object.assign({ key: hostname, hostname }, FALLBACK, exact);
+    // 已知站点：仅使用该站点的精确配置，不再合并 FALLBACK 的宽泛选择器。
+    // 旧逻辑会把 FALLBACK 的 [class*='message'] / [class*='content-text'] 等
+    // 兜底选择器并入已知站点，导致侧边栏、欢迎语、设置面板等非对话元素被误识别为 AI 回复。
+    return Object.assign({ key: hostname, hostname }, exact);
   }
 
   global.AISaverSites = { SITES, FALLBACK, getSiteConfig };

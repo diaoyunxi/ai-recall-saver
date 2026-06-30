@@ -1,5 +1,5 @@
 /**
- * AI撤回保存器 - 核心内容脚本 (v1.0.1 性能重构版)
+ * AI撤回保存器 - 核心内容脚本 (v1.0.3 严格识别版)
  *
  * v1.0.0 的问题：
  *  - 流式输出时 markdown 重渲染触发海量 childList 删除事件，被误判为"撤回"，
@@ -13,6 +13,15 @@
  *  4. mutation 批处理：debounce 300ms 批量处理，不逐条同步执行
  *  5. content nodes 缓存：避免每次 querySelectorAll
  *  6. observer 降级：去掉 characterData，只保留 childList + 必要 attributes
+ *
+ * v1.0.3 修复要点（解决「记录与对话无关的更新」）：
+ *  1. 已知站点不再合并 FALLBACK 宽泛选择器，避免侧边栏/欢迎语等被误识别
+ *  2. looksLikeAssistantContent 严格化：必须在 assistant 消息项内，或
+ *     （markdown 内容类 且 在对话根容器内）；最小文本长度 5 → 20
+ *  3. handleRemovedNode 仅处理「已确认快照」节点被删除，不再现拍快照兜底
+ *  4. 关闭隐藏型撤回（display:none / aria-hidden 误报率极高），observer 去掉 attributes 监听
+ *  5. checkContentRecall 增加「当前内容极短 <30」阈值，避免展开/折叠、tab 切换误判
+ *  6. collectAIContentNodesIn 去掉「root 文本 > 30 即视为内容」的危险兜底
  *
  * 暴露 window.__AISaver__ 供 popup / 控制台调用。
  */
@@ -93,6 +102,53 @@
   }
 
   // ============================================================
+  // 严格识别辅助：对话根容器 + assistant 消息项
+  // ============================================================
+  // 仅保留“具体”的根选择器（排除 main/body/[role=main]/html），
+  // 用于判断节点是否位于对话主容器内，避免侧边栏/欢迎语等被纳入监控。
+  const GENERIC_ROOT = new Set(["main", "body", "html", "[role='main']", "[role=main]"]);
+  const concreteRootSelectors = (SITE.rootSelectors || []).filter(
+    (s) => !GENERIC_ROOT.has(String(s).trim())
+  );
+
+  function isInsideConversationRoot(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (concreteRootSelectors.length === 0) return false;
+    for (const sel of concreteRootSelectors) {
+      try {
+        if (node.closest && node.closest(sel)) return true;
+      } catch (e) {}
+    }
+    return false;
+  }
+
+  // 判断节点是否位于“assistant 消息项”内：
+  // 向上查找 messageSelectors 匹配的祖先，并检查其 className 是否含 assistantHints。
+  // 命中消息项但无 assistant 标识 → 视为用户消息，返回 false。
+  function isInsideAssistantMessage(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (!SITE.messageSelectors || SITE.messageSelectors.length === 0) return false;
+    let el = node.parentElement;
+    let depth = 0;
+    while (el && el !== document.body && depth < 30) {
+      let isMsg = false;
+      for (const sel of SITE.messageSelectors) {
+        try { if (el.matches && el.matches(sel)) { isMsg = true; break; } } catch (e) {}
+      }
+      if (isMsg) {
+        const cls = (el.className && el.className.toString().toLowerCase()) || "";
+        for (const h of SITE.assistantHints) {
+          if (h && cls.indexOf(h.toLowerCase()) >= 0) return true;
+        }
+        return false;
+      }
+      el = el.parentElement;
+      depth++;
+    }
+    return false;
+  }
+
+  // ============================================================
   // AI 消息节点识别 + 缓存
   // ============================================================
   let cachedContentNodes = null;
@@ -121,7 +177,11 @@
         for (const item of items) {
           if (shouldExclude(item) || !looksLikeAssistantMessage(item)) continue;
           const inner = findLongestTextBlock(item);
-          if (inner && !seen.has(inner)) { seen.add(inner); out.push(inner); }
+          // 回退路径同样需要严格校验，避免把消息项内任意文本块当作 AI 内容
+          if (inner && !seen.has(inner) && looksLikeAssistantContent(inner)) {
+            seen.add(inner);
+            out.push(inner);
+          }
         }
       }
     }
@@ -131,12 +191,18 @@
   }
 
   function looksLikeAssistantContent(node) {
+    if (!node || node.nodeType !== 1) return false;
     const text = (node.textContent || "").trim();
-    if (text.length < 5) return false;
+    if (text.length < 20) return false; // 提高最小长度，过滤短文本/标签/按钮
     const tag = node.tagName;
     if (tag === "TEXTAREA" || tag === "INPUT") return false;
     if (node.isContentEditable) return false;
-    return true;
+    if (shouldExclude(node)) return false;
+    // 严格判定：必须在 assistant 消息项内，或（是 markdown 内容类 且 在对话根容器内）。
+    // 旧逻辑仅判断文本长度 > 5，几乎任何文本块都被视为 AI 回复，是误记录的根源。
+    if (isInsideAssistantMessage(node)) return true;
+    if (isContentLike(node) && isInsideConversationRoot(node)) return true;
+    return false;
   }
 
   function looksLikeAssistantMessage(item) {
@@ -186,9 +252,9 @@
         if (!shouldExclude(n) && looksLikeAssistantContent(n)) out.push(n);
       }
     }
-    if (out.length === 0 && root.nodeType === 1 && (root.textContent || "").trim().length > 30 && !shouldExclude(root)) {
-      out.push(root);
-    }
+    // 注意：不再将 root 本身作为兜底内容节点。
+    // 旧逻辑「root 文本 > 30 即视为内容」会把任意被删除/隐藏的文本块（菜单、弹窗、
+    // 折叠面板等）误判为 AI 回复，是误记录的主要来源之一。
     return out;
   }
 
@@ -264,8 +330,9 @@
       const confirmed = confirmedSnapshots.get(n);
       if (!confirmed) continue;
       const curText = (n.textContent || "").trim();
-      // 骤减判定：确认快照长，当前极短
-      if (confirmed.text.length >= 20 && curText.length < confirmed.text.length * 0.3) {
+      // 骤减判定：确认快照足够长，当前内容极短（<30 字符），且减少 >70%。
+      // 增加「当前极短」阈值，避免展开/折叠、tab 切换等常规交互被误判为覆盖撤回。
+      if (confirmed.text.length >= 20 && curText.length < 30 && curText.length < confirmed.text.length * 0.3) {
         if (addRecord("replace", confirmed)) {
           insertRestoreBlock(n.parentElement || n, n.nextSibling, confirmed, "内容被覆盖/清空");
         }
@@ -285,16 +352,24 @@
     // 流式期间忽略删除（React 重渲染导致的大量删除）
     if (isStreaming) return;
 
-    // 找到该节点对应的"确认快照"
+    // 只处理「已确认的 AI 内容节点」被删除：snap 必须来自 confirmedSnapshots，
+    // 不再现拍快照（否则任意含文本的节点删除都会被误记为撤回）。
     let snap = confirmedSnapshots.get(node);
+    let target = node;
     if (!snap) {
-      // 节点本身不是快照目标，检查其内部是否含快照内容
+      // 节点本身不是快照目标，检查其内部是否含「已确认」的 AI 内容节点
       const inner = collectAIContentNodesIn(node);
       if (inner.length === 0) return;
-      snap = confirmedSnapshots.get(inner[0]) || takeSnapshot(inner[0]);
-      if (!snap.text || snap.text.length < 3) return;
+      for (const cn of inner) {
+        const s = confirmedSnapshots.get(cn);
+        if (s && s.text.length >= 20) { snap = s; target = cn; break; }
+      }
+      if (!snap) return; // 内部没有已确认快照 → 不是 AI 回复，忽略
     }
-    if (snap.text.length < 3) return;
+    if (snap.text.length < 20) return;
+
+    // 双重保险：被删除内容必须位于对话主容器或 assistant 消息项内
+    if (!isInsideConversationRoot(target) && !isInsideAssistantMessage(target)) return;
 
     const key = hashStr(snap.text);
     // 已有相同内容待确认 → 跳过
@@ -346,8 +421,13 @@
     }
   }
 
-  // 隐藏判定
+  // 隐藏判定（默认关闭）
+  // 弹窗折叠、tab 切换、菜单收起、loading 隐藏等都会触发 display:none / aria-hidden，
+  // 误报率极高，因此默认不记录隐藏型撤回。
+  // 如需启用：在站点配置中设置 enableHideRecall: true，并恢复 observer 的 attributes 监听
+  // 与 processPendingMutations 中的 attributes 分支。
   function handleHide(el) {
+    if (SITE.enableHideRecall !== true) return;
     if (isStreaming) return;
     const hidden =
       getComputedStyle(el).display === "none" ||
@@ -358,7 +438,7 @@
     const contentNodes = collectAIContentNodesIn(el);
     for (const cn of contentNodes) {
       const snap = confirmedSnapshots.get(cn);
-      if (!snap || snap.text.length < 3) continue;
+      if (!snap || snap.text.length < 20) continue;
       addRecord("hide", snap);
     }
   }
@@ -610,7 +690,7 @@
     // 2. 流式期间不进行撤回判定
     if (isStreaming) return;
 
-    // 3. 处理删除/新增/隐藏
+    // 3. 处理删除/新增（隐藏型撤回默认关闭，不再处理 attributes 变化）
     for (const m of muts) {
       if (m.type === "childList") {
         if (m.removedNodes && m.removedNodes.length) {
@@ -624,10 +704,6 @@
             if (node.nodeType !== 1 || shouldExclude(node)) continue;
             handleAddedNode(node);
           }
-        }
-      } else if (m.type === "attributes" && m.attributeName) {
-        if (m.attributeName === "style" || m.attributeName === "class" || m.attributeName === "hidden" || m.attributeName === "aria-hidden") {
-          if (m.target && m.target.nodeType === 1 && !shouldExclude(m.target)) handleHide(m.target);
         }
       }
     }
@@ -657,11 +733,11 @@
     });
     // 降级监听：去掉 characterData，只保留 childList + 关键 attributes
     // characterData 在流式输出时每字符触发一次，是性能杀手
+    // 仅监听 childList：隐藏型撤回（display:none/aria-hidden）默认关闭，
+    // 不再监听 attributes，避免 class/style 频繁变化带来的性能开销与误判。
     observer.observe(root, {
       childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "class", "hidden", "aria-hidden"]
+      subtree: true
     });
   }
 
@@ -764,7 +840,7 @@
       }
     }, 1000);
     try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
-    console.log(`[AI撤回保存器 v1.0.1] 已在 ${SITE.name} (${location.hostname}) 启动。流式检测已启用，性能已优化。`);
+    console.log(`[AI撤回保存器 v1.0.3] 已在 ${SITE.name} (${location.hostname}) 启动。严格识别已启用，仅监控 AI 助手回复。`);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
