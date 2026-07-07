@@ -1,5 +1,5 @@
 /**
- * AI撤回保存器 - 核心内容脚本 (v1.0.1 性能重构版)
+ * AI撤回保存器 - 核心内容脚本 (v1.0.3 降低误报率版)
  *
  * v1.0.0 的问题：
  *  - 流式输出时 markdown 重渲染触发海量 childList 删除事件，被误判为"撤回"，
@@ -14,6 +14,17 @@
  *  5. content nodes 缓存：避免每次 querySelectorAll
  *  6. observer 降级：去掉 characterData，只保留 childList + 必要 attributes
  *
+ * v1.0.3 降低误报率方案（重点修复"内容覆盖误报"与"节点隐藏误报"）：
+ *  1. SENSITIVITY 三档配置（strict 默认 / balanced / aggressive），阈值与延迟全可配置
+ *     由 popup 写入 chrome.storage.local.sensitivity，content 启动读取并监听变化
+ *  2. handleHide 增加延迟确认（严格 1000ms）+ 恢复可见取消 + 可见相似度二次校验
+ *     修复折叠展开、切换深浅色主题、虚拟列表滚动、模态框 aria-hidden 临时变化误报
+ *  3. checkContentRecall 阈值可配置（严格减少>85%）+ 二次相似度校验，降低 markdown 重渲染误报
+ *  4. pageStillHasSimilarContent 改为前缀+后缀双校验 + 长度阈值提升至 98% + 最短文本要求
+ *     新增 pageHasVisibleSimilarContent 跳过被隐藏节点，专供 handleHide
+ *  5. addRecord 去重窗口可配置（严格 8s）+ 最小快照长度可配置
+ *  6. DEBUG_MODE 调试日志开关，便于排查误报（chrome.storage.local.debugMode）
+ *
  * 暴露 window.__AISaver__ 供 popup / 控制台调用。
  */
 (function () {
@@ -25,6 +36,96 @@
 
   const STORE = window.__AISaver__ || (window.__AISaver__ = {});
   STORE.records = STORE.records || [];
+
+  // ============================================================
+  // 灵敏度配置（三档：严格 / 平衡 / 激进）
+  // ============================================================
+  // v1.0.3 新增：降低误报率方案
+  // 由 popup 写入 chrome.storage.local.sensitivity，content 启动时读取并监听变化
+  // - strict(默认)：宁可漏判，阈值高、延迟长、二次校验严格，适合误报敏感场景
+  // - balanced：折中，接近 v1.0.2 行为
+  // - aggressive：宁可误报，阈值低、延迟短，适合撤回高频且容忍噪声的场景
+  const SENSITIVITY_PRESETS = {
+    strict: {
+      name: "严格",
+      hideDelay: 1000,            // 隐藏延迟确认 ms（v1.0.2 为 0，立即记录，是隐藏误报主因）
+      removeDelay: 800,           // 删除延迟确认 ms（v1.0.2 为 600）
+      shrinkThreshold: 0.15,      // 骤减判定：当前长度 < 确认长度 * 0.15 触发（即减少 >85%）；v1.0.2 为 0.3（减少 >70%）
+      minConfirmedLen: 30,        // 触发骤减判定的最小确认长度（v1.0.2 为 20）
+      minSnapshotLen: 5,          // 记录快照的最小长度（v1.0.2 为 3）
+      similarityRatio: 0.98,      // pageStillHasSimilarContent 长度阈值（v1.0.2 为 0.85）
+      similarityPrefix: 80,      // 相似度前缀比对长度（v1.0.2 为 50）
+      similaritySuffix: 30,      // 相似度后缀比对长度（v1.0.3 新增，v1.0.2 无）
+      minSimilarityLen: 30,      // 参与相似度判定的最小文本长度（v1.0.3 新增）
+      dedupWindow: 8000,         // 去重窗口 ms（v1.0.2 为 3000）
+      hideRequireSimilarCheck: true // 隐藏判定是否做相似度二次校验（v1.0.2 为 false）
+    },
+    balanced: {
+      name: "平衡",
+      hideDelay: 600,
+      removeDelay: 600,
+      shrinkThreshold: 0.30,
+      minConfirmedLen: 20,
+      minSnapshotLen: 3,
+      similarityRatio: 0.95,
+      similarityPrefix: 60,
+      similaritySuffix: 20,
+      minSimilarityLen: 20,
+      dedupWindow: 5000,
+      hideRequireSimilarCheck: true
+    },
+    aggressive: {
+      name: "激进",
+      hideDelay: 300,
+      removeDelay: 400,
+      shrinkThreshold: 0.40,
+      minConfirmedLen: 15,
+      minSnapshotLen: 3,
+      similarityRatio: 0.90,
+      similarityPrefix: 40,
+      similaritySuffix: 15,
+      minSimilarityLen: 10,
+      dedupWindow: 3000,
+      hideRequireSimilarCheck: false
+    }
+  };
+
+  let SENSITIVITY = SENSITIVITY_PRESETS.strict;
+  let DEBUG_MODE = false;
+
+  // 调试日志：仅在 DEBUG_MODE 开启时输出，便于排查误报
+  function debug() {
+    if (!DEBUG_MODE) return;
+    try {
+      const args = Array.prototype.slice.call(arguments);
+      args.unshift("[AI撤回保存器]");
+      console.debug.apply(console, args);
+    } catch (e) {}
+  }
+
+  // 从 chrome.storage 加载灵敏度与调试开关，并监听变化
+  function loadConfig() {
+    try {
+      chrome.storage.local.get(["sensitivity", "debugMode"], (res) => {
+        if (res.sensitivity && SENSITIVITY_PRESETS[res.sensitivity]) {
+          SENSITIVITY = SENSITIVITY_PRESETS[res.sensitivity];
+        }
+        DEBUG_MODE = !!res.debugMode;
+        debug("配置已加载", { sensitivity: SENSITIVITY.name, debug: DEBUG_MODE });
+      });
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== "local") return;
+        if (changes.sensitivity && SENSITIVITY_PRESETS[changes.sensitivity.newValue]) {
+          SENSITIVITY = SENSITIVITY_PRESETS[changes.sensitivity.newValue];
+          debug("灵敏度切换为", SENSITIVITY.name);
+        }
+        if (changes.debugMode) {
+          DEBUG_MODE = !!changes.debugMode.newValue;
+          debug("调试模式", DEBUG_MODE ? "开启" : "关闭");
+        }
+      });
+    } catch (e) {}
+  }
 
   const SITE = window.AISaverSites
     ? window.AISaverSites.getSiteConfig(location.hostname)
@@ -257,6 +358,7 @@
   // ============================================================
 
   // 内容覆盖/清空判定（非流式时）
+  // v1.0.3：阈值与最小长度改为可配置，并增加二次相似度校验，降低 markdown 重渲染误报
   function checkContentRecall() {
     if (isStreaming) return;
     const nodes = collectAIContentNodes();
@@ -264,8 +366,16 @@
       const confirmed = confirmedSnapshots.get(n);
       if (!confirmed) continue;
       const curText = (n.textContent || "").trim();
-      // 骤减判定：确认快照长，当前极短
-      if (confirmed.text.length >= 20 && curText.length < confirmed.text.length * 0.3) {
+      // 骤减判定：确认快照长度达标，当前长度小于阈值比例
+      // 严格：减少 >85%；平衡：减少 >70%；激进：减少 >60%
+      if (confirmed.text.length >= SENSITIVITY.minConfirmedLen && curText.length < confirmed.text.length * SENSITIVITY.shrinkThreshold) {
+        // v1.0.3 二次校验：若页面其他位置仍存在高度相似内容，视为重渲染而非撤回
+        if (pageStillHasSimilarContent(confirmed.text)) {
+          debug("骤减但页面仍有相似内容，判定为重渲染", { confirmedLen: confirmed.text.length, curLen: curText.length });
+          confirmedSnapshots.set(n, takeSnapshot(n));
+          continue;
+        }
+        debug("判定为内容覆盖/清空撤回", { confirmedLen: confirmed.text.length, curLen: curText.length, threshold: SENSITIVITY.shrinkThreshold });
         if (addRecord("replace", confirmed)) {
           insertRestoreBlock(n.parentElement || n, n.nextSibling, confirmed, "内容被覆盖/清空");
         }
@@ -292,40 +402,60 @@
       const inner = collectAIContentNodesIn(node);
       if (inner.length === 0) return;
       snap = confirmedSnapshots.get(inner[0]) || takeSnapshot(inner[0]);
-      if (!snap.text || snap.text.length < 3) return;
+      if (!snap.text || snap.text.length < SENSITIVITY.minSnapshotLen) return;
     }
-    if (snap.text.length < 3) return;
+    if (snap.text.length < SENSITIVITY.minSnapshotLen) return;
 
     const key = hashStr(snap.text);
     // 已有相同内容待确认 → 跳过
     if (pendingRemovals.has(key)) return;
 
-    // 延迟 600ms 确认：若期间原位置出现等价内容(重渲染)，则取消
+    debug("节点删除待确认", { textLen: snap.text.length, delay: SENSITIVITY.removeDelay });
+    // v1.0.3：延迟时间改为可配置（严格 800ms / 平衡 600ms / 激进 400ms）
     const timer = setTimeout(() => {
       pendingRemovals.delete(key);
       // 确认：检查页面是否仍有高度相似的内容（重渲染后新节点已就位）
       if (pageStillHasSimilarContent(snap.text)) {
         // 重渲染，非撤回，丢弃
+        debug("删除待确认被取消（页面仍有相似内容，判定为重渲染）", { textLen: snap.text.length });
         return;
       }
+      debug("确认节点删除撤回", { textLen: snap.text.length });
       // 确认撤回
       if (addRecord("remove", snap)) {
         insertRestoreBlock(parent, nextSibling, snap, "节点被删除");
       }
-    }, 600);
+    }, SENSITIVITY.removeDelay);
     pendingRemovals.set(key, { snap, timer });
   }
 
   // 检查页面是否仍有高度相似内容（用于判断是否为重渲染而非撤回）
+  // 返回 true  = 页面仍有相似内容 = 重渲染 = 不记录撤回
+  // 返回 false = 页面无相似内容 = 真实撤回 = 记录
+  // v1.0.3：前缀+后缀双校验 + 可配置长度阈值 + 最短文本要求，降低前缀碰撞漏报与重渲染误报
   function pageStillHasSimilarContent(text) {
-    const nodes = collectAIContentNodes(true);
+    if (!text) return false;
     const targetLen = text.length;
+    // 短文本前缀易碰撞（如"好的"、"根据您的问题"），无法可靠判定相似性
+    // 严格模式下倾向不记录短文本撤回（返回 true 视为重渲染）
+    if (targetLen < SENSITIVITY.minSimilarityLen) {
+      return true;
+    }
+    const nodes = collectAIContentNodes(true);
+    const ratio = SENSITIVITY.similarityRatio;
+    const prefixLen = SENSITIVITY.similarityPrefix;
+    const suffixLen = SENSITIVITY.similaritySuffix;
     for (const n of nodes) {
       const cur = (n.textContent || "").trim();
-      // 长度相近且前缀匹配（重渲染内容基本一致）
-      if (cur.length >= targetLen * 0.85 && cur.slice(0, 50) === text.slice(0, 50)) {
-        return true;
+      // 长度阈值校验（严格 98% / 平衡 95% / 激进 90%）
+      if (cur.length < targetLen * ratio) continue;
+      // 前缀校验（严格 80 字符）
+      if (cur.slice(0, prefixLen) !== text.slice(0, prefixLen)) continue;
+      // 后缀校验（v1.0.3 新增）：避免开头相同但结尾被篡改的内容被误判为重渲染
+      if (suffixLen > 0 && cur.length >= suffixLen && targetLen >= suffixLen) {
+        if (cur.slice(-suffixLen) !== text.slice(-suffixLen)) continue;
       }
+      return true;
     }
     return false;
   }
@@ -346,9 +476,69 @@
     }
   }
 
+  // 检查节点或其祖先链是否处于隐藏状态（v1.0.3 新增）
+  function isHiddenOrAncestorHidden(node) {
+    if (!node || !node.isConnected) return true;
+    let p = node;
+    while (p && p !== document.body) {
+      const cs = getComputedStyle(p);
+      if (cs.display === "none" || cs.visibility === "hidden" || p.hidden || p.getAttribute("aria-hidden") === "true") {
+        return true;
+      }
+      p = p.parentElement;
+    }
+    return false;
+  }
+
+  // 检查页面"可见"位置是否仍有相似内容（v1.0.3 新增，handleHide 专用）
+  // 与 pageStillHasSimilarContent 区别：跳过被隐藏的节点，避免被隐藏节点自身被误匹配
+  function pageHasVisibleSimilarContent(text) {
+    if (!text) return false;
+    const targetLen = text.length;
+    if (targetLen < SENSITIVITY.minSimilarityLen) {
+      return true;
+    }
+    const nodes = collectAIContentNodes(true);
+    const ratio = SENSITIVITY.similarityRatio;
+    const prefixLen = SENSITIVITY.similarityPrefix;
+    const suffixLen = SENSITIVITY.similaritySuffix;
+    for (const n of nodes) {
+      // 跳过被隐藏的节点（包括祖先隐藏）
+      if (isHiddenOrAncestorHidden(n)) continue;
+      const cur = (n.textContent || "").trim();
+      if (cur.length < targetLen * ratio) continue;
+      if (cur.slice(0, prefixLen) !== text.slice(0, prefixLen)) continue;
+      if (suffixLen > 0 && cur.length >= suffixLen && targetLen >= suffixLen) {
+        if (cur.slice(-suffixLen) !== text.slice(-suffixLen)) continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // 判断节点是否为根容器级别（v1.0.3 新增）
+  // 用于排除切换标签页/路由/模态框遮罩导致的整片隐藏误报
+  function isRootContainer(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el === document.body || el === document.documentElement) return true;
+    if (el.tagName === "MAIN") return true;
+    for (const sel of SITE.rootSelectors) {
+      try { if (el.matches && el.matches(sel)) return true; } catch (e) {}
+    }
+    return false;
+  }
+
   // 隐藏判定
+  // v1.0.3：增加延迟确认 + 恢复可见取消 + 可见相似度二次校验 + 根容器整片隐藏排除
+  // 大幅降低折叠展开、切换深浅色主题、虚拟列表滚动、模态框 aria-hidden 临时变化等导致的误报
+  const pendingHides = new Map(); // key=hash(text) -> { snap, timer, cn }
   function handleHide(el) {
     if (isStreaming) return;
+    // v1.0.3：根容器级别的整片隐藏（切换标签页/路由/模态框遮罩）视为 UI 切换，非撤回
+    if (isRootContainer(el)) {
+      debug("忽略根容器整片隐藏（UI 切换，非撤回）", { tag: el.tagName });
+      return;
+    }
     const hidden =
       getComputedStyle(el).display === "none" ||
       getComputedStyle(el).visibility === "hidden" ||
@@ -358,8 +548,31 @@
     const contentNodes = collectAIContentNodesIn(el);
     for (const cn of contentNodes) {
       const snap = confirmedSnapshots.get(cn);
-      if (!snap || snap.text.length < 3) continue;
-      addRecord("hide", snap);
+      if (!snap || snap.text.length < SENSITIVITY.minSnapshotLen) continue;
+      const key = hashStr(snap.text);
+      if (pendingHides.has(key)) continue;
+      debug("隐藏待确认", { textLen: snap.text.length, delay: SENSITIVITY.hideDelay });
+      const timer = setTimeout(() => {
+        pendingHides.delete(key);
+        // 校验1：节点是否已被移除（属于删除而非隐藏，交由 handleRemovedNode 处理）
+        if (!cn.isConnected) {
+          debug("隐藏待确认被取消（节点已移除，转由删除判定处理）", { textLen: snap.text.length });
+          return;
+        }
+        // 校验2：节点是否已恢复可见（折叠展开、主题切换回切、模态框关闭等）
+        if (!isHiddenOrAncestorHidden(cn)) {
+          debug("隐藏待确认被取消（节点已恢复可见）", { textLen: snap.text.length });
+          return;
+        }
+        // 校验3：可见位置相似度二次校验（页面其他可见位置仍有内容视为重渲染/复制）
+        if (SENSITIVITY.hideRequireSimilarCheck && pageHasVisibleSimilarContent(snap.text)) {
+          debug("隐藏待确认被取消（可见位置仍有相似内容）", { textLen: snap.text.length });
+          return;
+        }
+        debug("确认节点隐藏撤回", { textLen: snap.text.length });
+        addRecord("hide", snap);
+      }, SENSITIVITY.hideDelay);
+      pendingHides.set(key, { snap, timer, cn });
     }
   }
 
@@ -369,10 +582,14 @@
   function addRecord(reason, snapshot, extra) {
     if (!snapshot || (!snapshot.text && !snapshot.html)) return false;
     const text = snapshot.text || "";
-    if (text.length < 3) return false;
+    if (text.length < SENSITIVITY.minSnapshotLen) return false;
     const id = hashStr(text) + "_" + snapshot.ts;
     const now = Date.now();
-    if (STORE.records.some((r) => r.id === id && now - r.capturedAt < 3000)) return false;
+    // v1.0.3：去重窗口可配置（严格 8s / 平衡 5s / 激进 3s），降低短时间重复误报
+    if (STORE.records.some((r) => r.id === id && now - r.capturedAt < SENSITIVITY.dedupWindow)) {
+      debug("记录被去重过滤", { id, reason });
+      return false;
+    }
     const record = {
       id,
       site: SITE.name,
@@ -386,6 +603,7 @@
     };
     STORE.records.unshift(record);
     if (STORE.records.length > 500) STORE.records.length = 500;
+    debug("新增撤回记录", { reason, textLen: text.length, preview: truncate(text, 60) });
     onNewRecord(record);
     return true;
   }
@@ -729,6 +947,8 @@
   // 初始化
   // ============================================================
   function init() {
+    // v1.0.3：先加载灵敏度配置（异步），再初始化监听
+    loadConfig();
     ensureUI();
     observeRoot();
     // 初始确认快照
@@ -764,7 +984,7 @@
       }
     }, 1000);
     try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
-    console.log(`[AI撤回保存器 v1.0.1] 已在 ${SITE.name} (${location.hostname}) 启动。流式检测已启用，性能已优化。`);
+    console.log(`[AI撤回保存器 v1.0.3] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {

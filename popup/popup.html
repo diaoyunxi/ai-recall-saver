@@ -29,6 +29,26 @@
     </div>
   </div>
 
+  <div class="config">
+    <div class="config-title">🛡 误报防护</div>
+    <div class="config-row">
+      <span class="label">灵敏度模式</span>
+      <div class="seg" id="sensitivitySeg">
+        <button data-sens="strict" class="seg-btn">严格</button>
+        <button data-sens="balanced" class="seg-btn">平衡</button>
+        <button data-sens="aggressive" class="seg-btn">激进</button>
+      </div>
+    </div>
+    <div class="config-row">
+      <span class="label">调试日志</span>
+      <label class="switch">
+        <input type="checkbox" id="debugToggle" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="config-tip" id="sensTip">严格：宁可漏判，阈值高、延迟长、二次校验严格</div>
+  </div>
+
   <div class="actions">
     <button id="btnPanel" class="primary">📋 查看撤回历史</button>
     <button id="btnRefresh">🔄 刷新</button>

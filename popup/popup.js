@@ -76,5 +76,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
   aboutLink.href = `https://github.com/diaoyunxi/ai-recall-saver`;
 
+  // v1.0.3：灵敏度模式切换与调试日志开关
+  const sensSeg = document.getElementById("sensitivitySeg");
+  const sensTip = document.getElementById("sensTip");
+  const debugToggle = document.getElementById("debugToggle");
+  const SENS_TIPS = {
+    strict: "严格：宁可漏判，阈值高、延迟长、二次校验严格",
+    balanced: "平衡：折中，接近 v1.0.2 行为",
+    aggressive: "激进：宁可误报，阈值低、延迟短"
+  };
+  function applySensitivity(sens) {
+    sensSeg.querySelectorAll(".seg-btn").forEach((b) => {
+      b.classList.toggle("active", b.getAttribute("data-sens") === sens);
+    });
+    sensTip.textContent = SENS_TIPS[sens] || SENS_TIPS.strict;
+  }
+  // 读取已保存配置（默认 strict）
+  chrome.storage.local.get(["sensitivity", "debugMode"], (res) => {
+    const sens = res.sensitivity || "strict";
+    applySensitivity(sens);
+    debugToggle.checked = !!res.debugMode;
+  });
+  // 点击切换灵敏度模式（写入 chrome.storage，content.js 通过 onChanged 监听实时生效）
+  sensSeg.addEventListener("click", (e) => {
+    const btn = e.target.closest(".seg-btn");
+    if (!btn) return;
+    const sens = btn.getAttribute("data-sens");
+    chrome.storage.local.set({ sensitivity: sens });
+    applySensitivity(sens);
+  });
+  // 切换调试日志开关
+  debugToggle.addEventListener("change", () => {
+    chrome.storage.local.set({ debugMode: debugToggle.checked });
+  });
+
   loadRecords();
 });

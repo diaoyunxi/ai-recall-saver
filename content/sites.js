@@ -69,7 +69,7 @@
         "[class*='markdown']",
         "[class*='contentText']"
       ],
-      assistantHints: ["assistant", "ai", "bot"],
+      assistantHints: ["assistant", "bot", "kimi"],
       regenerateSelectors: [
         "[class*='regenerate']",
         "button[aria-label*='重新']"
@@ -95,7 +95,7 @@
         "[class*='markdown']",
         "[class*='contentText']"
       ],
-      assistantHints: ["assistant", "ai", "bot"],
+      assistantHints: ["assistant", "bot", "kimi"],
       regenerateSelectors: ["[class*='regenerate']"],
       excludeSelectors: ["textarea", "[class*='editor']"]
     },
@@ -170,8 +170,7 @@
       ],
       contentSelectors: [
         ".markdown-body",
-        "[class*='markdown']",
-        "[class*='content']"
+        "[class*='markdown']"
       ],
       assistantHints: ["assistant", "bot", "chatglm"],
       regenerateSelectors: [
@@ -284,7 +283,7 @@
       "[class*='content-text']",
       "[class*='bubble-content']"
     ],
-    assistantHints: ["assistant", "bot", "ai", "reply"],
+    assistantHints: ["assistant", "bot"],
     regenerateSelectors: [
       "[class*='regenerate']",
       "button[aria-label*='重新生成']",
@@ -294,18 +293,68 @@
     excludeSelectors: ["textarea", "input", "[contenteditable]", "pre code"]
   };
 
+  // v1.0.3：统一排除基线，所有站点（含 FALLBACK）自动合并，降低各站点 excludeSelectors 单薄导致的误报
+  // 覆盖：输入框、编辑器、代码块、消息工具栏、模态框、抽屉、Toast、通知、侧边栏、历史会话、导航页头页脚
+  const EXCLUDE_BASELINE = [
+    "textarea",
+    "input",
+    "[contenteditable]",
+    "pre code",
+    "[class*='input']",
+    "[class*='editor']",
+    "[class*='toolbar']",
+    "[class*='action']",
+    "[class*='operate']",
+    "[class*='tools']",
+    "[role='dialog']",
+    "[class*='modal']",
+    "[class*='drawer']",
+    "[class*='toast']",
+    "[class*='notification']",
+    "[class*='notice']",
+    "[role='alert']",
+    "[class*='sidebar']",
+    "[class*='history']",
+    "[class*='aside']",
+    "nav",
+    "header",
+    "footer"
+  ];
+
+  // 数组去重合并工具
+  function mergeUnique() {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < arguments.length; i++) {
+      const list = arguments[i];
+      if (!Array.isArray(list)) continue;
+      for (const sel of list) {
+        if (seen.has(sel)) continue;
+        seen.add(sel);
+        out.push(sel);
+      }
+    }
+    return out;
+  }
+
   /**
    * 根据当前 hostname 获取站点配置
    * @param {string} hostname
-   * @returns {object} 合并了 fallback 的站点配置
+   * @returns {object} 合并了 fallback 与统一排除基线的站点配置
    */
   function getSiteConfig(hostname) {
     const exact = SITES[hostname];
     if (!exact) {
-      return Object.assign({ key: "fallback", hostname }, FALLBACK);
+      // v1.0.3：FALLBACK 也合并统一排除基线
+      const fb = Object.assign({ key: "fallback", hostname }, FALLBACK);
+      fb.excludeSelectors = mergeUnique(FALLBACK.excludeSelectors, EXCLUDE_BASELINE);
+      return fb;
     }
-    return Object.assign({ key: hostname, hostname }, FALLBACK, exact);
+    const merged = Object.assign({ key: hostname, hostname }, FALLBACK, exact);
+    // v1.0.3：合并 站点自身 + FALLBACK + 统一基线 三者 excludeSelectors（去重）
+    merged.excludeSelectors = mergeUnique(exact.excludeSelectors, FALLBACK.excludeSelectors, EXCLUDE_BASELINE);
+    return merged;
   }
 
-  global.AISaverSites = { SITES, FALLBACK, getSiteConfig };
+  global.AISaverSites = { SITES, FALLBACK, EXCLUDE_BASELINE, getSiteConfig };
 })(window);

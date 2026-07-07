@@ -115,3 +115,105 @@ body {
 
 .footer a { color: #aaa; text-decoration: none; }
 .footer a:hover { color: #e85d5d; }
+
+/* v1.0.3 误报防护配置区 */
+.config {
+  padding: 10px 14px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.config-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 8px;
+}
+
+.config-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+}
+
+.seg {
+  display: flex;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.seg-btn {
+  padding: 5px 10px;
+  border: none;
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  color: #666;
+  border-right: 1px solid #ddd;
+  transition: all 0.15s;
+}
+
+.seg-btn:last-child {
+  border-right: none;
+}
+
+.seg-btn:hover {
+  color: #e85d5d;
+}
+
+.seg-btn.active {
+  background: #e85d5d;
+  color: #fff;
+}
+
+/* 调试日志开关 */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: #ccc;
+  border-radius: 20px;
+  transition: 0.2s;
+}
+
+.slider::before {
+  content: "";
+  position: absolute;
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  bottom: 2px;
+  background: #fff;
+  border-radius: 50%;
+  transition: 0.2s;
+}
+
+input:checked + .slider {
+  background: #e85d5d;
+}
+
+input:checked + .slider::before {
+  transform: translateX(16px);
+}
+
+.config-tip {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 6px;
+  line-height: 1.4;
+}
