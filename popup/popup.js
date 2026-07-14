@@ -49,6 +49,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       monitorEl.className = "value ok";
     } catch (e) {
       // content script 未注入（非支持站点或页面未就绪）
+      console.warn("[AI撤回保存器 popup] loadRecords 失败:", e);
       siteNameEl.textContent = "当前页面不受支持";
       monitorEl.textContent = "未运行";
       monitorEl.className = "value";
@@ -66,6 +67,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     } catch (e) {
       // 预期内错误（content script 未注入），静默处理
+      console.warn("[AI撤回保存器 popup] 打开面板失败:", e);
     }
   });
 
@@ -81,6 +83,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     } catch (e) {
       // content script 未注入，静默处理
+      console.warn("[AI撤回保存器 popup] 清空记录失败:", e);
     }
   });
 
@@ -90,6 +93,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (tab) await chrome.tabs.sendMessage(tab.id, { type: "EXPORT_RECORDS" });
     } catch (e) {
       // 预期内错误（content script 未注入），静默处理
+      console.warn("[AI撤回保存器 popup] 导出记录失败:", e);
     }
   });
 
@@ -104,6 +108,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   } catch (e) {
     // 存储读取失败，静默忽略
+    console.warn("[AI撤回保存器 popup] 读取更新信息失败:", e);
   }
 
   aboutLink.href = "https://github.com/diaoyunxi/ai-recall-saver";
@@ -136,6 +141,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     debugToggle.checked = !!res.debugMode;
   } catch (e) {
     // 存储读取失败，使用默认值
+    console.warn("[AI撤回保存器 popup] 读取灵敏度配置失败:", e);
     applySensitivity("strict");
   }
 

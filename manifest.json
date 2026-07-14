@@ -75,7 +75,16 @@
         "icons/icon48.png"
       ],
       "matches": [
-        "https://*/*"
+        "https://chat.deepseek.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://kimi.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://www.doubao.com/*",
+        "https://chatglm.cn/*",
+        "https://chat.z.ai/*",
+        "https://yiyan.baidu.com/*",
+        "https://yuanbao.tencent.com/*",
+        "https://chat.zhipuai.cn/*"
       ]
     }
   ]

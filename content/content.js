@@ -107,6 +107,8 @@
   function loadConfig() {
     try {
       chrome.storage.local.get(["sensitivity", "debugMode"], (res) => {
+        // 【一般问题修复】防御性检查：res 可能为 undefined（存储异常时）
+        if (!res) return;
         if (res.sensitivity && SENSITIVITY_PRESETS[res.sensitivity]) {
           SENSITIVITY = SENSITIVITY_PRESETS[res.sensitivity];
         }
@@ -155,12 +157,15 @@
 
   /**
    * DJB2 哈希变体（初始值 5381，乘数 33，异或混合）
-   * 碰撞概率极低，适合短文本快速去重与键生成
+   * 【一般问题修复】结合哈希值与文本长度作为键，进一步降低短文本碰撞概率
+   * @param {string} s - 输入文本
+   * @returns {string} 哈希键字符串
    */
   function hashStr(s) {
     let h = 5381, i = s.length;
     while (i) h = (h * 33) ^ s.charCodeAt(--i);
-    return (h >>> 0).toString(36);
+    // 结合哈希值和文本长度，降低短文本碰撞概率
+    return (h >>> 0).toString(36) + "_" + s.length;
   }
 
   const HTML_ESCAPE_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -170,7 +175,11 @@
 
   /**
    * 净化 HTML，防止 XSS 攻击
-   * 优先使用 DOMPurify（如果已加载），否则对危险标签/属性做基础过滤
+   * 优先使用 DOMPurify（如果已加载），否则使用 DOM API（DOMParser）解析并移除危险标签和属性
+   * 【严重缺陷修复】使用 DOM API 替代正则方案，确保 script/iframe/object/embed/svg/link/style/meta/base/form
+   *   标签被移除，所有 on* 事件属性和 javascript: 协议被清除
+   * @param {string} html - 原始 HTML 字符串
+   * @returns {string} 净化后的安全 HTML
    */
   function sanitizeHtml(html) {
     if (!html) return "";
@@ -178,13 +187,40 @@
     if (window.DOMPurify && window.DOMPurify.sanitize) {
       return window.DOMPurify.sanitize(html);
     }
-    // 兜底：移除 <script> 标签和事件属性（on*="..."）
-    return html
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<script[\s\S]*?(?:>|\/>)/gi, "")
-      .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-      .replace(/javascript\s*:/gi, "")
-      .replace(/data\s*:\s*text\/html/gi, "");
+    // 【严重缺陷修复】使用 DOM API 解析替代正则，更安全地移除危险内容
+    try {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      // 移除危险标签（含其子内容）
+      const dangerousTags = ["script", "iframe", "object", "embed", "svg", "link", "style", "meta", "base", "form"];
+      for (const tag of dangerousTags) {
+        doc.querySelectorAll(tag).forEach((el) => el.remove());
+      }
+      // 移除所有 on* 事件属性和 javascript: 协议
+      doc.querySelectorAll("*").forEach((el) => {
+        const attrs = Array.from(el.attributes);
+        for (const attr of attrs) {
+          // 移除 on* 事件属性（如 onclick, onload 等）
+          if (attr.name.toLowerCase().startsWith("on")) {
+            el.removeAttribute(attr.name);
+            continue;
+          }
+          // 移除 URL 属性中的 javascript: 协议
+          const urlAttrs = ["src", "href", "action", "formaction", "poster", "data", "xlink:href", "background", "cite"];
+          if (urlAttrs.includes(attr.name.toLowerCase())) {
+            if (/^\s*javascript:/i.test(attr.value)) {
+              el.removeAttribute(attr.name);
+            }
+          }
+        }
+      });
+      return doc.body.innerHTML;
+    } catch (e) {
+      // DOMParser 解析失败时，降级为纯文本（使用 textContent 自动转义）
+      console.error("[AI撤回保存器] sanitizeHtml DOM 解析失败，降级为纯文本:", e);
+      const div = document.createElement("div");
+      div.textContent = html;
+      return div.innerHTML;
+    }
   }
 
   function truncate(s, n) {
@@ -282,8 +318,13 @@
   function findLongestTextBlock(root) {
     let best = null, bestLen = 0;
     const MAX_DEPTH = 100;
+    // 【优化建议】添加总节点数限制，防止遍历超大 DOM 树导致卡顿
+    const MAX_NODES = 5000;
+    let nodeCount = 0;
     const walk = (el, depth) => {
       if (depth > MAX_DEPTH || shouldExclude(el)) return;
+      if (nodeCount >= MAX_NODES) return;
+      nodeCount++;
       const t = (el.textContent || "").trim();
       if (t.length > bestLen && el.children.length < 50) { bestLen = t.length; best = el; }
       for (const c of el.children) walk(c, depth + 1);
@@ -434,6 +475,15 @@
     const key = hashStr(snap.text);
     // 已有相同内容待确认 → 跳过
     if (pendingRemovals.has(key)) return;
+
+    // 【一般问题修复】Map 大小上限检查，超过 200 时清理最旧条目（含定时器）
+    if (pendingRemovals.size >= 200) {
+      const oldestKey = pendingRemovals.keys().next().value;
+      const oldest = pendingRemovals.get(oldestKey);
+      if (oldest && oldest.timer) clearTimeout(oldest.timer);
+      pendingRemovals.delete(oldestKey);
+      debug("pendingRemovals 达到上限，清理最旧条目", { currentSize: pendingRemovals.size });
+    }
 
     debug("节点删除待确认", { textLen: snap.text.length, delay: SENSITIVITY.removeDelay });
     // v1.0.3：延迟时间改为可配置（严格 800ms / 平衡 600ms / 激进 400ms）
@@ -586,6 +636,14 @@
       if (!snap || snap.text.length < SENSITIVITY.minSnapshotLen) continue;
       const key = hashStr(snap.text);
       if (pendingHides.has(key)) continue;
+      // 【一般问题修复】Map 大小上限检查，超过 200 时清理最旧条目（含定时器）
+      if (pendingHides.size >= 200) {
+        const oldestKey = pendingHides.keys().next().value;
+        const oldest = pendingHides.get(oldestKey);
+        if (oldest && oldest.timer) clearTimeout(oldest.timer);
+        pendingHides.delete(oldestKey);
+        debug("pendingHides 达到上限，清理最旧条目", { currentSize: pendingHides.size });
+      }
       debug("隐藏待确认", { textLen: snap.text.length, delay: SENSITIVITY.hideDelay });
       const timer = setTimeout(() => {
         pendingHides.delete(key);
@@ -1019,14 +1077,35 @@
       }
     });
     // SPA 路由切换后重新挂载（页面不可见时也需检测路由变化，保留此定时器）
+    // 【一般问题修复】保存路由检测 interval 引用，在路由变化时清理并重建快照定时器
     let lastUrl = location.href;
-    setInterval(() => {
+    let routeCheckTimer = setInterval(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
         cachedContentNodes = null;
+        // 【一般问题修复】路由变化时清理并重建 snapshotTimer，避免旧定时器引用过期节点
+        if (snapshotTimer) { clearInterval(snapshotTimer); snapshotTimer = null; }
+        // 清理待确认的删除/隐藏记录（路由变化后旧节点已失效）
+        for (const [k, v] of pendingRemovals.entries()) { if (v.timer) clearTimeout(v.timer); pendingRemovals.delete(k); }
+        for (const [k, v] of pendingHides.entries()) { if (v.timer) clearTimeout(v.timer); pendingHides.delete(k); }
         setTimeout(observeRoot, 600);
+        // 重建快照定时器
+        snapshotTimer = setInterval(refreshSnapshots, 3000);
       }
     }, 1000);
+
+    // 【一般问题修复】页面卸载时清理所有定时器和待确认 Map，防止内存泄漏
+    window.addEventListener("beforeunload", () => {
+      if (snapshotTimer) clearInterval(snapshotTimer);
+      if (routeCheckTimer) clearInterval(routeCheckTimer);
+      if (streamingTimer) clearTimeout(streamingTimer);
+      // 清理待确认的删除/隐藏记录定时器
+      for (const [k, v] of pendingRemovals.entries()) { if (v.timer) clearTimeout(v.timer); }
+      for (const [k, v] of pendingHides.entries()) { if (v.timer) clearTimeout(v.timer); }
+      pendingRemovals.clear();
+      pendingHides.clear();
+    });
+
     try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] CONTENT_READY 消息发送失败:", e); }
     console.log(`[AI撤回保存器 v1.0.3] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }

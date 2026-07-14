@@ -128,6 +128,20 @@ python scripts/pack_crx.py
 
 ## 📝 版本历史
 
+### v1.0.4（安全加固版）
+
+代码审查安全修复：
+
+- **XSS 防护加固**：`sanitizeHtml` 改用 DOM API（DOMParser）解析替代正则方案，移除 script/iframe/object/embed/svg/link/style/meta/base/form 标签，移除所有 on* 事件属性和 javascript: 协议
+- **哈希碰撞修复**：`hashStr` 结合哈希值与文本长度作为键，降低短文本碰撞概率
+- **内存泄漏修复**：添加 `beforeunload` 事件清理所有定时器和待确认 Map；路由变化时清理并重建 interval
+- **Map 大小限制**：`pendingRemovals`/`pendingHides` 添加 200 条上限检查，超限自动清理最旧条目
+- **防御性检查**：`chrome.storage.local.get` 回调添加 `if (!res) return` 防御
+- **tabCounts 清理**：安装/更新时清空 tabCounts，防止旧版本遗留的无效 tabId 残留
+- **资源访问收窄**：`web_accessible_resources` matches 从 `https://*/*` 收窄为实际支持的站点域名列表
+- **DOM 遍历限制**：`findLongestTextBlock` 添加 5000 节点总数限制，防止超大 DOM 树卡顿
+- **日志完善**：popup.js 所有 catch 块添加 `console.warn` 输出
+
 ### v1.0.3（降低误报率版）
 
 重点修复「内容覆盖误报」与「节点隐藏误报」：

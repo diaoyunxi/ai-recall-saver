@@ -9,8 +9,12 @@
  *
  * 注意：MV3 Service Worker 会被挂起，定时任务使用 chrome.alarms。
  */
+// GitHub 仓库所有者与名称（用于自动更新检查，硬编码为当前项目仓库地址）
+// 如需 fork 后自用，请修改为你的 GitHub 用户名和仓库名
 const GITHUB_OWNER = "diaoyunxi";
 const REPO_NAME = "ai-recall-saver";
+// GitHub Releases API 地址，用于查询最新版本号
+// 注意：此 URL 为 GitHub 官方 API，无需认证但有速率限制（每小时 60 次未认证请求）
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_OWNER}/${REPO_NAME}/releases/latest`;
 const MANIFEST = chrome.runtime.getManifest();
 const CURRENT_VERSION = MANIFEST.version;
@@ -133,6 +137,10 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ["all"]
   });
   setBadge(0);
+  // 【一般问题修复】安装/更新时清空 tabCounts，防止旧版本遗留的无效 tabId 残留
+  for (const key of Object.keys(tabCounts)) {
+    delete tabCounts[key];
+  }
   // 创建定时闹钟：每 6 小时检查一次更新
   chrome.alarms.create("aisaver-update-check", { periodInMinutes: 360 });
   // 安装/更新后立即检查一次
