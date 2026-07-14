@@ -234,4 +234,14 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except FileNotFoundError as e:
+        print(f"错误：文件未找到 - {e}")
+        sys.exit(2)
+    except PermissionError as e:
+        print(f"错误：权限不足 - {e}")
+        sys.exit(2)
+    except Exception as e:
+        print(f"校验失败：{e}")
+        sys.exit(2)

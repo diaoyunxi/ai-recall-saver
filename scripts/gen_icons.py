@@ -4,6 +4,7 @@ AI撤回保存器 - 图标生成脚本
 设计：红色圆角方形背景 + 白色盾牌 + 盾牌内红色撤回箭头(↺)。
 """
 import os
+import math
 from PIL import Image, ImageDraw
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "icons")
@@ -59,7 +60,6 @@ def draw_icon(size):
     d.arc(arc_box, start=30, end=330, fill=red, width=lw)
     # 箭头头部（小三角）
     # 弧末端约在 330°，即左下方
-    import math
     a = math.radians(330)
     ex = cx + (s * 0.135) * math.cos(a)
     ey = (top + s * 0.355) + (s * 0.135) * math.sin(a)

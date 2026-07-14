@@ -30,6 +30,21 @@ function setBadge(count) {
 // 存储各 tab 的撤回计数
 const tabCounts = {};
 
+// ---------- 标签页关闭时清理 tabCounts ----------
+chrome.tabs.onRemoved.addListener((tabId) => {
+  delete tabCounts[tabId];
+});
+
+// ---------- 通知点击监听器（模块顶部只注册一次，避免内存泄漏）----------
+chrome.notifications.onClicked.addListener((id) => {
+  if (id !== "aisaver-update") return;
+  chrome.storage.local.get("updateInfo", (res) => {
+    const info = res.updateInfo;
+    if (info && info.url) chrome.tabs.create({ url: info.url });
+  });
+  chrome.notifications.clear(id);
+});
+
 // ---------- 自动更新检查 ----------
 function compareVersion(a, b) {
   // 返回 1 表示 a>b，-1 表示 a<b，0 相等
@@ -46,7 +61,10 @@ function compareVersion(a, b) {
 
 async function checkUpdate() {
   try {
-    const res = await fetch(RELEASE_API, { cache: "no-store" });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(RELEASE_API, { cache: "no-store", signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) return;
     const data = await res.json();
     const latestTag = data.tag_name || "";
@@ -72,18 +90,12 @@ async function checkUpdate() {
         priority: 2,
         isClickable: true
       });
-      chrome.notifications.onClicked.addListener(function notifyClick(id) {
-        if (id === "aisaver-update") {
-          chrome.tabs.create({ url: info.url });
-          chrome.notifications.clear(id);
-          chrome.notifications.onClicked.removeListener(notifyClick);
-        }
-      });
+      // 通知点击监听器已在模块顶部注册，此处不再重复注册
     } else {
       await chrome.storage.local.set({ updateInfo: { hasUpdate: false, current: CURRENT_VERSION, latest: latestTag, checkedAt: Date.now() } });
     }
   } catch (e) {
-    // 网络错误静默
+    console.error("[AI撤回保存器] 检查更新失败:", e);
   }
 }
 

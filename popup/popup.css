@@ -1,8 +1,16 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ---------- CSS 变量（与 content.css 共享色彩系统）---------- */
+:root {
+  --aisaver-primary: #e85d5d;
+  --aisaver-primary-hover: #d94444;
+  --aisaver-primary-gradient: linear-gradient(135deg, #e85d5d, #d94444);
+  --aisaver-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
 body {
   width: 320px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--aisaver-font-family);
   background: #fafafa;
   color: #222;
   font-size: 13px;
@@ -13,7 +21,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  background: linear-gradient(135deg, #e85d5d, #d94444);
+  background: var(--aisaver-primary-gradient);
   color: #fff;
 }
 
@@ -51,7 +59,7 @@ body {
 
 .value { font-weight: 600; }
 
-.value.count { color: #e85d5d; font-size: 16px; }
+.value.count { color: var(--aisaver-primary); font-size: 16px; }
 
 .value.ok { color: #34a853; }
 
@@ -74,20 +82,20 @@ body {
 }
 
 .actions button:hover {
-  border-color: #e85d5d;
-  color: #e85d5d;
+  border-color: var(--aisaver-primary);
+  color: var(--aisaver-primary);
 }
 
 .actions button.primary {
   grid-column: 1 / 3;
-  background: #e85d5d;
+  background: var(--aisaver-primary);
   color: #fff;
-  border-color: #e85d5d;
+  border-color: var(--aisaver-primary);
   font-weight: 600;
 }
 
 .actions button.primary:hover {
-  background: #d94444;
+  background: var(--aisaver-primary-hover);
 }
 
 .update {
@@ -101,7 +109,7 @@ body {
 
 .update-title { font-weight: 600; margin-bottom: 4px; }
 
-.update a { color: #e85d5d; text-decoration: none; }
+.update a { color: var(--aisaver-primary); text-decoration: none; }
 .update a:hover { text-decoration: underline; }
 
 .footer {
@@ -114,7 +122,7 @@ body {
 }
 
 .footer a { color: #aaa; text-decoration: none; }
-.footer a:hover { color: #e85d5d; }
+.footer a:hover { color: var(--aisaver-primary); }
 
 /* v1.0.3 误报防护配置区 */
 .config {
@@ -160,11 +168,11 @@ body {
 }
 
 .seg-btn:hover {
-  color: #e85d5d;
+  color: var(--aisaver-primary);
 }
 
 .seg-btn.active {
-  background: #e85d5d;
+  background: var(--aisaver-primary);
   color: #fff;
 }
 
@@ -204,7 +212,7 @@ body {
 }
 
 input:checked + .slider {
-  background: #e85d5d;
+  background: var(--aisaver-primary);
 }
 
 input:checked + .slider::before {

@@ -212,4 +212,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except FileNotFoundError as e:
+        print(f"错误：文件未找到 - {e}")
+        sys.exit(1)
+    except PermissionError as e:
+        print(f"错误：权限不足 - {e}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"错误：manifest.json 格式无效 - {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"打包失败：{e}")
+        sys.exit(1)

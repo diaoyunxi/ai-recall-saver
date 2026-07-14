@@ -3,13 +3,36 @@
  * 原位恢复块 + 侧边历史浮层
  * ============================================================ */
 
+/* ---------- CSS 变量（统一管理色彩系统，便于主题切换）---------- */
+:root {
+  --aisaver-primary: #e85d5d;
+  --aisaver-primary-dark: #c05050;
+  --aisaver-primary-gradient: linear-gradient(135deg, #e85d5d, #d94444);
+  --aisaver-bg-light: #ffffff;
+  --aisaver-bg-dark: #1f1f23;
+  --aisaver-bg-item-dark: #2a2a2e;
+  --aisaver-text-light: #222;
+  --aisaver-text-dark: #e8e8e8;
+  --aisaver-text-muted: #999;
+  --aisaver-text-subtle: #aaa;
+  --aisaver-border-light: #f0f0f0;
+  --aisaver-border-dark: #333;
+  --aisaver-border-item-dark: #383838;
+  --aisaver-shadow-panel: -4px 0 24px rgba(0, 0, 0, 0.18);
+  --aisaver-z-max: 2147483647;
+  --aisaver-radius-sm: 4px;
+  --aisaver-radius-md: 8px;
+  --aisaver-radius-lg: 10px;
+  --aisaver-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
 /* ---------- 原位恢复块 ---------- */
 .aisaver-restore-block {
   position: relative;
   margin: 12px 0;
   padding: 14px 16px 14px 18px;
-  border: 1px dashed #e85d5d;
-  border-left: 4px solid #e85d5d;
+  border: 1px dashed var(--aisaver-primary);
+  border-left: 4px solid var(--aisaver-primary);
   border-radius: 8px;
   background: linear-gradient(90deg, rgba(232, 93, 93, 0.06), rgba(255, 255, 255, 0.55));
   font-size: 14px;
@@ -22,7 +45,7 @@
 .aisaver-restore-block.aisaver-dark {
   background: linear-gradient(90deg, rgba(232, 93, 93, 0.14), rgba(40, 40, 42, 0.9));
   color: #e8e8e8;
-  border-color: #c05050;
+  border-color: var(--aisaver-primary-dark);
 }
 
 .aisaver-restore-tag {
@@ -34,7 +57,7 @@
   font-size: 12px;
   font-weight: 600;
   color: #fff;
-  background: #e85d5d;
+  background: var(--aisaver-primary);
   border-radius: 10px;
   user-select: none;
 }
@@ -67,10 +90,10 @@
 }
 
 .aisaver-restore-actions a {
-  color: #e85d5d;
+  color: var(--aisaver-primary);
   cursor: pointer;
   text-decoration: none;
-  border-bottom: 1px dotted #e85d5d;
+  border-bottom: 1px dotted var(--aisaver-primary);
 }
 
 .aisaver-restore-actions a:hover {
@@ -91,8 +114,7 @@
   height: 100vh;
   z-index: 2147483647;
   pointer-events: none;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Microsoft YaHei", sans-serif;
+  font-family: var(--aisaver-font-family);
 }
 
 #aisaver-panel-root * {
@@ -105,8 +127,8 @@
   right: 0;
   width: 100%;
   height: 100%;
-  background: #ffffff;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+  background: var(--aisaver-bg-light);
+  box-shadow: var(--aisaver-shadow-panel);
   display: flex;
   flex-direction: column;
   pointer-events: auto;
@@ -119,8 +141,8 @@
 }
 
 .aisaver-panel.aisaver-dark {
-  background: #1f1f23;
-  color: #e8e8e8;
+  background: var(--aisaver-bg-dark);
+  color: var(--aisaver-text-dark);
 }
 
 .aisaver-panel-header {
@@ -134,7 +156,7 @@
 }
 
 .aisaver-panel.aisaver-dark .aisaver-panel-header {
-  border-bottom-color: #333;
+  border-bottom-color: var(--aisaver-border-dark);
 }
 
 .aisaver-panel-title {
@@ -171,12 +193,12 @@
   display: flex;
   gap: 8px;
   padding: 10px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--aisaver-border-light);
   font-size: 12px;
 }
 
 .aisaver-panel.aisaver-dark .aisaver-panel-toolbar {
-  border-bottom-color: #333;
+  border-bottom-color: var(--aisaver-border-dark);
 }
 
 .aisaver-panel-toolbar button {
@@ -190,15 +212,15 @@
 }
 
 .aisaver-panel.aisaver-dark .aisaver-panel-toolbar button {
-  background: #2a2a2e;
+  background: var(--aisaver-bg-item-dark);
   border-color: #444;
   color: #ccc;
 }
 
 .aisaver-panel-toolbar button:hover {
-  background: #e85d5d;
+  background: var(--aisaver-primary);
   color: #fff;
-  border-color: #e85d5d;
+  border-color: var(--aisaver-primary);
 }
 
 .aisaver-panel-list {
@@ -225,8 +247,8 @@
 }
 
 .aisaver-panel.aisaver-dark .aisaver-item {
-  background: #2a2a2e;
-  border-color: #383838;
+  background: var(--aisaver-bg-item-dark);
+  border-color: var(--aisaver-border-item-dark);
 }
 
 .aisaver-item-head {
@@ -249,7 +271,7 @@
 
 .aisaver-item-reason {
   font-size: 11px;
-  color: #e85d5d;
+  color: var(--aisaver-primary);
   margin-bottom: 6px;
   background: rgba(232, 93, 93, 0.08);
   padding: 2px 6px;
@@ -277,7 +299,7 @@
 }
 
 .aisaver-item-actions a {
-  color: #e85d5d;
+  color: var(--aisaver-primary);
   cursor: pointer;
   text-decoration: none;
 }
@@ -294,7 +316,7 @@
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: #e85d5d;
+  background: var(--aisaver-primary);
   color: #fff;
   border: none;
   cursor: pointer;

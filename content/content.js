@@ -100,7 +100,7 @@
       const args = Array.prototype.slice.call(arguments);
       args.unshift("[AI撤回保存器]");
       console.debug.apply(console, args);
-    } catch (e) {}
+    } catch (e) { console.error("[AI撤回保存器] debug输出异常:", e); }
   }
 
   // 从 chrome.storage 加载灵敏度与调试开关，并监听变化
@@ -124,7 +124,7 @@
           debug("调试模式", DEBUG_MODE ? "开启" : "关闭");
         }
       });
-    } catch (e) {}
+    } catch (e) { console.error("[AI撤回保存器] 加载配置异常:", e); }
   }
 
   const SITE = window.AISaverSites
@@ -153,14 +153,38 @@
     };
   }
 
+  /**
+   * DJB2 哈希变体（初始值 5381，乘数 33，异或混合）
+   * 碰撞概率极低，适合短文本快速去重与键生成
+   */
   function hashStr(s) {
     let h = 5381, i = s.length;
     while (i) h = (h * 33) ^ s.charCodeAt(--i);
     return (h >>> 0).toString(36);
   }
 
+  const HTML_ESCAPE_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    return s.replace(/[&<>"']/g, (c) => HTML_ESCAPE_MAP[c]);
+  }
+
+  /**
+   * 净化 HTML，防止 XSS 攻击
+   * 优先使用 DOMPurify（如果已加载），否则对危险标签/属性做基础过滤
+   */
+  function sanitizeHtml(html) {
+    if (!html) return "";
+    // 优先使用 DOMPurify
+    if (window.DOMPurify && window.DOMPurify.sanitize) {
+      return window.DOMPurify.sanitize(html);
+    }
+    // 兜底：移除 <script> 标签和事件属性（on*="..."）
+    return html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<script[\s\S]*?(?:>|\/>)/gi, "")
+      .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+      .replace(/javascript\s*:/gi, "")
+      .replace(/data\s*:\s*text\/html/gi, "");
   }
 
   function truncate(s, n) {
@@ -188,7 +212,7 @@
     if (node.hasAttribute && node.hasAttribute("data-aisaver")) return true;
     if (node.id && node.id.indexOf("aisaver") === 0) return true;
     for (const sel of SITE.excludeSelectors) {
-      try { if (node.matches && node.matches(sel)) return true; } catch (e) {}
+      try { if (node.matches && node.matches(sel)) return true; } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] 无效排除选择器:", sel, e); }
     }
     return false;
   }
@@ -209,7 +233,7 @@
 
     for (const sel of SITE.contentSelectors) {
       let nodes = [];
-      try { nodes = $$(sel); } catch (e) { continue; }
+      try { nodes = $$(sel); } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] 无效内容选择器:", sel, e); continue; }
       for (const n of nodes) {
         if (seen.has(n) || shouldExclude(n)) continue;
         if (looksLikeAssistantContent(n)) { seen.add(n); out.push(n); }
@@ -218,7 +242,7 @@
     if (out.length === 0) {
       for (const sel of SITE.messageSelectors) {
         let items = [];
-        try { items = $$(sel); } catch (e) { continue; }
+        try { items = $$(sel); } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] 无效消息选择器:", sel, e); continue; }
         for (const item of items) {
           if (shouldExclude(item) || !looksLikeAssistantMessage(item)) continue;
           const inner = findLongestTextBlock(item);
@@ -250,20 +274,21 @@
         if (item.querySelector && item.querySelector(sel)) {
           if ((item.textContent || "").trim().length > 20) return true;
         }
-      } catch (e) {}
+      } catch (e) { console.error("[AI撤回保存器] 消息监听器注册失败:", e); }
     }
     return false;
   }
 
   function findLongestTextBlock(root) {
     let best = null, bestLen = 0;
-    const walk = (el) => {
-      if (shouldExclude(el)) return;
+    const MAX_DEPTH = 100;
+    const walk = (el, depth) => {
+      if (depth > MAX_DEPTH || shouldExclude(el)) return;
       const t = (el.textContent || "").trim();
       if (t.length > bestLen && el.children.length < 50) { bestLen = t.length; best = el; }
-      for (const c of el.children) walk(c);
+      for (const c of el.children) walk(c, depth + 1);
     };
-    walk(root);
+    walk(root, 0);
     return best;
   }
 
@@ -272,7 +297,7 @@
     const cls = (node.className && node.className.toString().toLowerCase()) || "";
     if (cls.indexOf("markdown") >= 0) return true;
     for (const sel of SITE.contentSelectors) {
-      try { if (node.matches && node.matches(sel)) return true; } catch (e) {}
+      try { if (node.matches && node.matches(sel)) return true; } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] 无效内容匹配选择器:", sel, e); }
     }
     return false;
   }
@@ -282,7 +307,7 @@
     if (!root || !root.querySelectorAll) return out;
     for (const sel of SITE.contentSelectors) {
       let nodes = [];
-      try { nodes = Array.from(root.querySelectorAll(sel)); } catch (e) { continue; }
+      try { nodes = Array.from(root.querySelectorAll(sel)); } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] 无效内部内容选择器:", sel, e); continue; }
       for (const n of nodes) {
         if (!shouldExclude(n) && looksLikeAssistantContent(n)) out.push(n);
       }
@@ -477,13 +502,18 @@
   }
 
   // 检查节点或其祖先链是否处于隐藏状态（v1.0.3 新增）
+  // 优化：优先检查无需重排的属性（hidden、aria-hidden），使用 checkVisibility 替代 getComputedStyle
   function isHiddenOrAncestorHidden(node) {
     if (!node || !node.isConnected) return true;
     let p = node;
     while (p && p !== document.body) {
-      const cs = getComputedStyle(p);
-      if (cs.display === "none" || cs.visibility === "hidden" || p.hidden || p.getAttribute("aria-hidden") === "true") {
-        return true;
+      if (p.hidden || p.getAttribute("aria-hidden") === "true") return true;
+      // 现代浏览器支持 checkVisibility，无需强制重排
+      if (typeof p.checkVisibility === "function" && !p.checkVisibility()) return true;
+      // 兜底：仅当 checkVisibility 不可用时才使用 getComputedStyle
+      if (!p.checkVisibility) {
+        const cs = getComputedStyle(p);
+        if (cs.display === "none" || cs.visibility === "hidden") return true;
       }
       p = p.parentElement;
     }
@@ -523,7 +553,7 @@
     if (el === document.body || el === document.documentElement) return true;
     if (el.tagName === "MAIN") return true;
     for (const sel of SITE.rootSelectors) {
-      try { if (el.matches && el.matches(sel)) return true; } catch (e) {}
+      try { if (el.matches && el.matches(sel)) return true; } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] 无效根容器选择器:", sel, e); }
     }
     return false;
   }
@@ -539,11 +569,16 @@
       debug("忽略根容器整片隐藏（UI 切换，非撤回）", { tag: el.tagName });
       return;
     }
-    const hidden =
-      getComputedStyle(el).display === "none" ||
-      getComputedStyle(el).visibility === "hidden" ||
-      el.hidden ||
-      el.getAttribute("aria-hidden") === "true";
+    // 优化：先检查无需重排的属性，减少 getComputedStyle 调用
+    let hidden = el.hidden || el.getAttribute("aria-hidden") === "true";
+    if (!hidden) {
+      if (typeof el.checkVisibility === "function") {
+        hidden = !el.checkVisibility();
+      } else {
+        const cs = getComputedStyle(el);
+        hidden = cs.display === "none" || cs.visibility === "hidden";
+      }
+    }
     if (!hidden) return;
     const contentNodes = collectAIContentNodesIn(el);
     for (const cn of contentNodes) {
@@ -620,7 +655,7 @@
     block.innerHTML = `
       <div class="aisaver-restore-tag">⚠ 已撤回 · ${escapeHtml(reason)}</div>
       <div class="aisaver-restore-meta">${escapeHtml(SITE.name)} · ${formatTime(snapshot.ts)}</div>
-      <div class="aisaver-restore-content">${snapshot.html || escapeHtml(snapshot.text)}</div>
+      <div class="aisaver-restore-content">${sanitizeHtml(snapshot.html) || escapeHtml(snapshot.text)}</div>
       <div class="aisaver-restore-actions">
         <a data-act="copy">复制文本</a>
         <a data-act="locate">定位记录</a>
@@ -639,7 +674,7 @@
       } else {
         parentNode.appendChild(block);
       }
-    } catch (e) {}
+    } catch (e) { console.error("[AI撤回保存器] 插入恢复块失败:", e); }
   }
 
   // ============================================================
@@ -768,7 +803,7 @@
     box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
     const body = document.createElement("div");
     body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
-    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    if (asHtml) body.innerHTML = sanitizeHtml(r.html); else body.textContent = r.text;
     box.appendChild(body);
     box.querySelector("a").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
@@ -794,7 +829,7 @@
       badgeEl.textContent = n > 99 ? "99+" : n;
       badgeEl.style.display = n > 0 ? "" : "none";
     }
-    try { chrome.runtime.sendMessage({ type: "UPDATE_BADGE", count: n }); } catch (e) {}
+    try { chrome.runtime.sendMessage({ type: "UPDATE_BADGE", count: n }); } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] 更新角标消息发送失败:", e); }
   }
 
   function onNewRecord(record) {
@@ -862,7 +897,7 @@
 
   let observer = null;
   function observeRoot() {
-    if (observer) { try { observer.disconnect(); } catch (e) {} }
+    if (observer) { try { observer.disconnect(); } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] observer断开失败:", e); } }
     let root = null;
     for (const sel of SITE.rootSelectors) {
       try { root = $(sel); } catch (e) { continue; }
@@ -941,7 +976,7 @@
         return;
       }
     });
-  } catch (e) {}
+  } catch (e) { console.error("[AI撤回保存器] 消息监听器注册失败:", e); }
 
   // ============================================================
   // 初始化
@@ -958,13 +993,14 @@
     bindRegenerateButtons();
     updateBadge();
     // 定时刷新确认快照（兜底，确保非流式状态也有最新快照）
-    setInterval(() => {
+    // 页面不可见时暂停轮询，可见时恢复，减少不必要的 CPU 占用
+    let snapshotTimer = setInterval(refreshSnapshots, 3000);
+    function refreshSnapshots() {
       if (!isStreaming) {
         const ns = collectAIContentNodes(true);
         let len = 0;
         for (const n of ns) {
           len += (n.textContent || "").trim().length;
-          // 只更新更长或相等的，避免覆盖
           const prev = confirmedSnapshots.get(n);
           const cur = takeSnapshot(n);
           if (!prev || cur.text.length >= prev.text.length) {
@@ -973,8 +1009,16 @@
         }
         lastTotalLength = len;
       }
-    }, 3000);
-    // SPA 路由切换后重新挂载
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        clearInterval(snapshotTimer);
+        snapshotTimer = null;
+      } else if (!snapshotTimer) {
+        snapshotTimer = setInterval(refreshSnapshots, 3000);
+      }
+    });
+    // SPA 路由切换后重新挂载（页面不可见时也需检测路由变化，保留此定时器）
     let lastUrl = location.href;
     setInterval(() => {
       if (location.href !== lastUrl) {
@@ -983,13 +1027,14 @@
         setTimeout(observeRoot, 600);
       }
     }, 1000);
-    try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
+    try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) { if (DEBUG_MODE) console.error("[AI撤回保存器] CONTENT_READY 消息发送失败:", e); }
     console.log(`[AI撤回保存器 v1.0.3] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
-    setTimeout(init, 300);
+    // DOM 已就绪，使用 requestAnimationFrame 在下一帧渲染前初始化，减少感知延迟
+    requestAnimationFrame(() => init());
   } else {
-    window.addEventListener("DOMContentLoaded", () => setTimeout(init, 300));
+    window.addEventListener("DOMContentLoaded", () => requestAnimationFrame(() => init()));
   }
 })();
