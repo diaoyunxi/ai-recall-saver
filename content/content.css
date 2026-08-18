@@ -1,0 +1,344 @@
+/* ============================================================
+ * AI撤回保存器 - 内容脚本样式
+ * 原位恢复块 + 侧边历史浮层
+ * ============================================================ */
+
+/* ---------- 原位恢复块 ---------- */
+.aisaver-restore-block {
+  position: relative;
+  margin: 12px 0;
+  padding: 14px 16px 14px 18px;
+  border: 1px dashed #e85d5d;
+  border-left: 4px solid #e85d5d;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(232, 93, 93, 0.06), rgba(255, 255, 255, 0.55));
+  font-size: 14px;
+  line-height: 1.7;
+  color: #2b2b2b;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  animation: aisaver-fadein 0.25s ease;
+}
+
+.aisaver-restore-block.aisaver-dark {
+  background: linear-gradient(90deg, rgba(232, 93, 93, 0.14), rgba(40, 40, 42, 0.9));
+  color: #e8e8e8;
+  border-color: #c05050;
+}
+
+.aisaver-restore-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #e85d5d;
+  border-radius: 10px;
+  user-select: none;
+}
+
+.aisaver-restore-meta {
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 6px;
+}
+
+.aisaver-restore-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.aisaver-restore-content img,
+.aisaver-restore-content video {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+.aisaver-restore-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.aisaver-restore-actions a {
+  color: #e85d5d;
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dotted #e85d5d;
+}
+
+.aisaver-restore-actions a:hover {
+  opacity: 0.8;
+}
+
+@keyframes aisaver-fadein {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- 侧边历史浮层 ---------- */
+#aisaver-panel-root {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 420px;
+  height: 100vh;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+#aisaver-panel-root * {
+  box-sizing: border-box;
+}
+
+.aisaver-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  height: 100%;
+  background: #ffffff;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.aisaver-panel.aisaver-open {
+  transform: translateX(0);
+}
+
+.aisaver-panel.aisaver-dark {
+  background: #1f1f23;
+  color: #e8e8e8;
+}
+
+.aisaver-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #eee;
+  background: #e85d5d;
+  color: #fff;
+}
+
+.aisaver-panel.aisaver-dark .aisaver-panel-header {
+  border-bottom-color: #333;
+}
+
+.aisaver-panel-title {
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aisaver-panel-count {
+  background: rgba(255, 255, 255, 0.25);
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.aisaver-panel-close {
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: #fff;
+}
+
+.aisaver-panel-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.aisaver-panel-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+
+.aisaver-panel.aisaver-dark .aisaver-panel-toolbar {
+  border-bottom-color: #333;
+}
+
+.aisaver-panel-toolbar button {
+  padding: 4px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fafafa;
+  cursor: pointer;
+  font-size: 12px;
+  color: #555;
+}
+
+.aisaver-panel.aisaver-dark .aisaver-panel-toolbar button {
+  background: #2a2a2e;
+  border-color: #444;
+  color: #ccc;
+}
+
+.aisaver-panel-toolbar button:hover {
+  background: #e85d5d;
+  color: #fff;
+  border-color: #e85d5d;
+}
+
+.aisaver-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.aisaver-empty {
+  text-align: center;
+  color: #aaa;
+  padding: 48px 16px;
+  font-size: 13px;
+}
+
+.aisaver-item {
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: #fafafa;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.aisaver-panel.aisaver-dark .aisaver-item {
+  background: #2a2a2e;
+  border-color: #383838;
+}
+
+.aisaver-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.aisaver-item-site {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e85d5d;
+}
+
+.aisaver-item-time {
+  font-size: 11px;
+  color: #aaa;
+}
+
+.aisaver-item-reason {
+  font-size: 11px;
+  color: #e85d5d;
+  margin-bottom: 6px;
+  background: rgba(232, 93, 93, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.aisaver-item-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+  color: #444;
+}
+
+.aisaver-panel.aisaver-dark .aisaver-item-text {
+  color: #ccc;
+}
+
+.aisaver-item-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.aisaver-item-actions a {
+  color: #e85d5d;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.aisaver-item-actions a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- 悬浮触发按钮（右下角） ---------- */
+#aisaver-fab {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #e85d5d;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(232, 93, 93, 0.45);
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  transition: transform 0.2s;
+}
+
+#aisaver-fab:hover {
+  transform: scale(1.08);
+}
+
+.aisaver-fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  border: 2px solid #fff;
+}
+
+/* ---------- 顶部通知条 ---------- */
+.aisaver-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(232, 93, 93, 0.96);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  z-index: 2147483647;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  animation: aisaver-fadein 0.2s ease;
+}
