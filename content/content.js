@@ -1,5 +1,5 @@
 /**
- * AI撤回保存器 - 核心内容脚本 (v1.0.3 降低误报率版)
+ * AI撤回保存器 - 核心内容脚本 (v1.0.4 降低误报率版)
  *
  * v1.0.0 的问题：
  *  - 流式输出时 markdown 重渲染触发海量 childList 删除事件，被误判为"撤回"，
@@ -14,7 +14,7 @@
  *  5. content nodes 缓存：避免每次 querySelectorAll
  *  6. observer 降级：去掉 characterData，只保留 childList + 必要 attributes
  *
- * v1.0.3 降低误报率方案（重点修复"内容覆盖误报"与"节点隐藏误报"）：
+ * v1.0.4 降低误报率方案（重点修复"内容覆盖误报"与"节点隐藏误报"）：
  *  1. SENSITIVITY 三档配置（strict 默认 / balanced / aggressive），阈值与延迟全可配置
  *     由 popup 写入 chrome.storage.local.sensitivity，content 启动读取并监听变化
  *  2. handleHide 增加延迟确认（严格 1000ms）+ 恢复可见取消 + 可见相似度二次校验
@@ -804,6 +804,147 @@
   }
 
   // ============================================================
+  // DeepSeek SSE 监听：直接从 completion 请求提取回复
+  // ============================================================
+  // v1.0.4: 针对 DeepSeek 添加 SSE 监听，从 completion 请求的响应中直接提取 AI 回复
+  // 监听 EventSource 消息，解析 data 中的 content 字段
+  function setupDeepSeekSSEListener() {
+    if (location.hostname !== 'chat.deepseek.com') return;
+    
+    const originalEventSource = window.EventSource;
+    if (!originalEventSource) return;
+    
+    window.EventSource = function(url, options) {
+      const es = new originalEventSource(url, options);
+      
+      // 检查是否是 completion 相关的 SSE
+      if (url && url.indexOf('completion') !== -1) {
+        debug('DeepSeek SSE: 监听到 completion 请求', url);
+        
+        let currentMessageId = null;
+        let accumulatedContent = '';
+        let thinkingContent = '';
+        let responseStarted = false;
+        
+        es.addEventListener('message', function(event) {
+          try {
+            const data = JSON.parse(event.data);
+            
+            // 处理 ready 事件，获取 message_id
+            if (data.request_message_id && data.response_message_id) {
+              currentMessageId = data.response_message_id;
+              debug('DeepSeek SSE: ready', data);
+              return;
+            }
+            
+            // 处理响应片段 (v 字段包含 content)
+            if (data.v) {
+              // 检查是否是 fragments 更新
+              if (data.v.response && data.v.response.fragments) {
+                const fragments = data.v.response.fragments;
+                for (let i = 0; i < fragments.length; i++) {
+                  const frag = fragments[i];
+                  if (frag.type === 'THINK' && frag.content) {
+                    thinkingContent += frag.content;
+                  } else if (frag.type === 'RESPONSE' && frag.content) {
+                    accumulatedContent += frag.content;
+                    responseStarted = true;
+                  }
+                }
+                debug('DeepSeek SSE: fragments update', { thinking: thinkingContent.length, response: accumulatedContent.length });
+              }
+              
+              // 处理 p 字段的路径更新 (如 response/fragments/-1/content)
+              if (data.p && data.o && data.v !== undefined) {
+                if (data.p.indexOf('response/fragments/-1/content') !== -1 || 
+                    data.p.indexOf('fragments/-1/content') !== -1) {
+                  if (data.o === 'APPEND' || data.o === 'SET') {
+                    accumulatedContent += data.v;
+                    responseStarted = true;
+                  }
+                }
+                debug('DeepSeek SSE: path update', data);
+              }
+              
+              // 处理独立的 v 字段 (流式字符)
+              if (typeof data.v === 'string' && !data.p) {
+                accumulatedContent += data.v;
+                responseStarted = true;
+              }
+            }
+            
+            // 检测响应结束
+            if (data.p === 'response/status' && data.v === 'FINISHED') {
+              debug('DeepSeek SSE: 响应完成', { content: accumulatedContent.substring(0, 100) });
+              if (accumulatedContent.trim().length > 0) {
+                // 创建虚拟快照记录
+                const virtualNode = {
+                  textContent: accumulatedContent,
+                  innerHTML: escapeHtml(accumulatedContent),
+                  tagName: 'DIV'
+                };
+                const snap = {
+                  text: accumulatedContent.trim(),
+                  html: escapeHtml(accumulatedContent),
+                  ts: Date.now(),
+                  source: 'deepseek-sse'
+                };
+                
+                // 检查是否已经有相同内容（避免重复）
+                const lastRecord = STORE.records[STORE.records.length - 1];
+                if (!lastRecord || lastRecord.snapshot.text !== snap.text) {
+                  addRecord('replace', snap);
+                  debug('DeepSeek SSE: 已记录撤回', snap.text.substring(0, 50));
+                }
+              }
+              // 重置状态
+              accumulatedContent = '';
+              thinkingContent = '';
+              responseStarted = false;
+              currentMessageId = null;
+            }
+            
+          } catch (e) {
+            // JSON 解析失败，忽略
+          }
+        }, false);
+        
+        es.addEventListener('update_session', function(event) {
+          debug('DeepSeek SSE: update_session', event.data);
+        }, false);
+        
+        es.addEventListener('title', function(event) {
+          debug('DeepSeek SSE: title', event.data);
+        }, false);
+        
+        es.addEventListener('close', function(event) {
+          debug('DeepSeek SSE: close', event.data);
+          // 连接关闭时，如果还有未保存的内容，也记录下来
+          if (accumulatedContent.trim().length > 0 && responseStarted) {
+            const snap = {
+              text: accumulatedContent.trim(),
+              html: escapeHtml(accumulatedContent),
+              ts: Date.now(),
+              source: 'deepseek-sse-close'
+            };
+            const lastRecord = STORE.records[STORE.records.length - 1];
+            if (!lastRecord || lastRecord.snapshot.text !== snap.text) {
+              addRecord('replace', snap);
+            }
+            accumulatedContent = '';
+            responseStarted = false;
+          }
+        }, false);
+      }
+      
+      return es;
+    };
+    
+    // 保持原始原型链
+    window.EventSource.prototype = originalEventSource.prototype;
+  }
+  
+  // ============================================================
   // MutationObserver（批处理 + 降级监听）
   // ============================================================
   // 收集 mutations，批量处理
@@ -949,6 +1090,8 @@
   function init() {
     // v1.0.3：先加载灵敏度配置（异步），再初始化监听
     loadConfig();
+    // v1.0.4: DeepSeek SSE 监听优先启动
+    setupDeepSeekSSEListener();
     ensureUI();
     observeRoot();
     // 初始确认快照
@@ -984,7 +1127,7 @@
       }
     }, 1000);
     try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
-    console.log(`[AI撤回保存器 v1.0.3] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
+    console.log(`[AI撤回保存器 v1.0.4] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
