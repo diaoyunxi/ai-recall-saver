@@ -1,5 +1,5 @@
 /**
- * AI撤回保存器 - 核心内容脚本 (v1.0.3 降低误报率版)
+ * AI撤回保存器 - 核心内容脚本 (v1.0.5 书签版诊断增强)
  *
  * v1.0.0 的问题：
  *  - 流式输出时 markdown 重渲染触发海量 childList 删除事件，被误判为"撤回"，
@@ -24,6 +24,13 @@
  *     新增 pageHasVisibleSimilarContent 跳过被隐藏节点，专供 handleHide
  *  5. addRecord 去重窗口可配置（严格 8s）+ 最小快照长度可配置
  *  6. DEBUG_MODE 调试日志开关，便于排查误报（chrome.storage.local.debugMode）
+ *
+ * v1.0.5 书签版修复（诊断 + 简易 UI）：
+ *  1. ensureUI() 真正实现悬浮按钮 (FAB) 和极简侧边面板，不再静默失效
+ *  2. openPanel / renderList / showFullText / exportRecords 全部实现，书签版可用
+ *  3. init() 增加诊断 Toast：节点识别为空时明确提示用户选择器可能已失效
+ *  4. 增加 DeepSeek SSE 直接监听（从 content.js 移植），降低对 DOM 选择器的依赖
+ *  5. debugMode 开启时打印站点配置和检测到的节点列表，便于排查
  *
  * 暴露 window.__AISaver__ 供 popup / 控制台调用。
  */
@@ -994,10 +1001,55 @@
 
   let fab, panelRoot, panelEl, listEl, badgeEl, panelOpen = false;
 
+  // v1.0.5：书签版初始化诊断 Toast（延迟 500ms 确保 DOM 已渲染）
+  function showInitDiagnostic(nodeCount) {
+    const msg = nodeCount > 0
+      ? `🛡 AI撤回保存器已就绪，检测到 ${nodeCount} 个 AI 消息节点`
+      : `⚠ AI撤回保存器已启动，但未检测到 AI 消息节点（可能站点类名已更新，请在控制台查看诊断信息）`;
+    setTimeout(() => showToast(msg), 500);
+  }
+
   function ensureUI() {
-    // 书签版：无悬浮按钮和侧边面板
     if (fab) return;
-    fab = true;
+    // 悬浮按钮
+    fab = document.createElement("button");
+    fab.id = "aisaver-fab";
+    fab.title = "AI撤回保存器 - 查看历史";
+    fab.innerHTML = '🛡<span class="aisaver-fab-badge" style="display:none">0</span>';
+    badgeEl = fab.querySelector(".aisaver-fab-badge");
+    fab.addEventListener("click", togglePanel);
+    document.body.appendChild(fab);
+    // 面板
+    panelRoot = document.createElement("div");
+    panelRoot.id = "aisaver-panel-root";
+    panelRoot.innerHTML = `
+      <div class="aisaver-panel">
+        <div class="aisaver-panel-header">
+          <div class="aisaver-panel-title">🛡 AI撤回保存器 <span class="aisaver-panel-count">0</span></div>
+          <button class="aisaver-panel-close" title="关闭">×</button>
+        </div>
+        <div class="aisaver-panel-toolbar">
+          <button data-act="clear">清空记录</button>
+          <button data-act="export">导出 JSON</button>
+          <button data-act="refresh">刷新</button>
+        </div>
+        <div class="aisaver-panel-list"></div>
+      </div>`;
+    document.body.appendChild(panelRoot);
+    panelEl = panelRoot.querySelector(".aisaver-panel");
+    listEl = panelRoot.querySelector(".aisaver-panel-list");
+    panelEl.querySelector(".aisaver-panel-close").addEventListener("click", () => openPanel(false));
+    panelEl.querySelector('[data-act="clear"]').addEventListener("click", () => {
+      if (confirm("确定清空当前页面的所有撤回记录？（仅清空内存，不可恢复）")) {
+        STORE.records.length = 0;
+        renderList();
+        updateBadge();
+        showToast("已清空");
+      }
+    });
+    panelEl.querySelector('[data-act="export"]').addEventListener("click", exportRecords);
+    panelEl.querySelector('[data-act="refresh"]').addEventListener("click", renderList);
+    applyDark();
   }
 
   function applyDark() {
@@ -1006,14 +1058,53 @@
   }
 
   function openPanel(open) {
-    // 书签版：面板功能已禁用
-    console.log("[AI撤回保存器] 面板功能在书签版中已禁用。记录保存在 window.__AISaver__.records");
+    ensureUI();
+    panelOpen = open !== undefined ? open : !panelOpen;
+    panelEl.classList.toggle("aisaver-open", panelOpen);
+    if (panelOpen) renderList();
   }
-  function togglePanel() { openPanel(); }
+  function togglePanel() { openPanel(!panelOpen); }
 
   function renderList() {
-    // 书签版：无侧边面板，记录可通过 console 查看
-    console.log("[AI撤回保存器] 当前记录数:", STORE.records.length);
+    if (!listEl) return;
+    applyDark();
+    panelRoot.querySelector(".aisaver-panel-count").textContent = STORE.records.length;
+    updateBadge();
+    if (STORE.records.length === 0) {
+      listEl.innerHTML = `<div class="aisaver-empty">暂无撤回记录<br><span style="font-size:12px;color:#bbb">当 AI 回复被撤回/重新生成/删除时，会自动保存在这里</span></div>`;
+      return;
+    }
+    listEl.innerHTML = STORE.records.map((r) => `
+      <div class="aisaver-item" data-id="${r.id}">
+        <div class="aisaver-item-head">
+          <span class="aisaver-item-site">${escapeHtml(r.site)}</span>
+          <span class="aisaver-item-time">${formatTime(r.timestamp)}</span>
+        </div>
+        <span class="aisaver-item-reason">${escapeHtml(reasonLabel(r.reason))}</span>
+        <div class="aisaver-item-text">${escapeHtml(truncate(r.text, 600))}</div>
+        <div class="aisaver-item-actions">
+          <a data-act="copy">复制</a>
+          <a data-act="full">查看全文</a>
+          <a data-act="html">查看HTML</a>
+        </div>
+      </div>`).join("");
+    listEl.querySelectorAll(".aisaver-item").forEach((item) => {
+      const id = item.getAttribute("data-id");
+      const r = STORE.records.find((x) => x.id === id);
+      if (!r) return;
+      item.querySelector('[data-act="copy"]').addEventListener("click", (e) => {
+        e.preventDefault();
+        navigator.clipboard && navigator.clipboard.writeText(r.text).then(() => showToast("已复制"));
+      });
+      item.querySelector('[data-act="full"]').addEventListener("click", (e) => {
+        e.preventDefault();
+        showFullText(r);
+      });
+      item.querySelector('[data-act="html"]').addEventListener("click", (e) => {
+        e.preventDefault();
+        showFullText(r, true);
+      });
+    });
   }
 
   function reasonLabel(reason) {
@@ -1021,14 +1112,33 @@
   }
 
   function showFullText(r, asHtml) {
-    // 书签版：查看全文功能已禁用，请通过 console 查看
-    console.log("[AI撤回保存器] 撤回记录:", r);
+    const dark = isDarkMode();
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-aisaver", "1");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:24px;";
+    const box = document.createElement("div");
+    box.style.cssText = `max-width:760px;width:100%;max-height:80vh;overflow:auto;border-radius:10px;padding:20px;background:${dark ? "#2a2a2e" : "#fff"};color:${dark ? "#eee" : "#222"};box-shadow:0 8px 32px rgba(0,0,0,.3);`;
+    box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
+    const body = document.createElement("div");
+    body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
+    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    box.appendChild(body);
+    box.querySelector("a").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
   }
 
   function exportRecords() {
-    // 书签版：导出功能已禁用
-    console.log("[AI撤回保存器] 导出功能在书签版中已禁用");
-    console.log("记录:", STORE.records);
+    const data = JSON.stringify(STORE.records, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ai-recall-${SITE.name}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("已导出 JSON");
   }
 
   function updateBadge() {
@@ -1037,12 +1147,148 @@
       badgeEl.textContent = n > 99 ? "99+" : n;
       badgeEl.style.display = n > 0 ? "" : "none";
     }
-    // 书签版：无扩展角标
+    // 书签版无 chrome.runtime，不发消息
   }
 
   function onNewRecord(record) {
+    ensureUI();
+    renderList();
     showToast(`捕获到一条撤回消息（${reasonLabel(record.reason)}）`);
-    console.log("[AI撤回保存器] 新记录:", record);
+  }
+
+  // ============================================================
+  // DeepSeek SSE 监听：直接从 completion 请求提取回复
+  // ============================================================
+  // v1.0.5: 针对 DeepSeek 添加 SSE 监听，从 completion 请求的响应中直接提取 AI 回复
+  // 监听 EventSource 消息，解析 data 中的 content 字段
+  function setupDeepSeekSSEListener() {
+    if (location.hostname !== 'chat.deepseek.com') return;
+
+    const originalEventSource = window.EventSource;
+    if (!originalEventSource) return;
+
+    window.EventSource = function(url, options) {
+      const es = new originalEventSource(url, options);
+
+      // 检查是否是 completion 相关的 SSE
+      if (url && url.indexOf('completion') !== -1) {
+        debug('DeepSeek SSE: 监听到 completion 请求', url);
+
+        let currentMessageId = null;
+        let accumulatedContent = '';
+        let thinkingContent = '';
+        let responseStarted = false;
+
+        es.addEventListener('message', function(event) {
+          try {
+            const data = JSON.parse(event.data);
+
+            // 处理 ready 事件，获取 message_id
+            if (data.request_message_id && data.response_message_id) {
+              currentMessageId = data.response_message_id;
+              debug('DeepSeek SSE: ready', data);
+              return;
+            }
+
+            // 处理响应片段 (v 字段包含 content)
+            if (data.v) {
+              // 检查是否是 fragments 更新
+              if (data.v.response && data.v.response.fragments) {
+                const fragments = data.v.response.fragments;
+                for (let i = 0; i < fragments.length; i++) {
+                  const frag = fragments[i];
+                  if (frag.type === 'THINK' && frag.content) {
+                    thinkingContent += frag.content;
+                  } else if (frag.type === 'RESPONSE' && frag.content) {
+                    accumulatedContent += frag.content;
+                    responseStarted = true;
+                  }
+                }
+                debug('DeepSeek SSE: fragments update', { thinking: thinkingContent.length, response: accumulatedContent.length });
+              }
+
+              // 处理 p 字段的路径更新 (如 response/fragments/-1/content)
+              if (data.p && data.o && data.v !== undefined) {
+                if (data.p.indexOf('response/fragments/-1/content') !== -1 ||
+                    data.p.indexOf('fragments/-1/content') !== -1) {
+                  if (data.o === 'APPEND' || data.o === 'SET') {
+                    accumulatedContent += data.v;
+                    responseStarted = true;
+                  }
+                }
+                debug('DeepSeek SSE: path update', data);
+              }
+
+              // 处理独立的 v 字段 (流式字符)
+              if (typeof data.v === 'string' && !data.p) {
+                accumulatedContent += data.v;
+                responseStarted = true;
+              }
+            }
+
+            // 检测响应结束
+            if (data.p === 'response/status' && data.v === 'FINISHED') {
+              debug('DeepSeek SSE: 响应完成', { content: accumulatedContent.substring(0, 100) });
+              if (accumulatedContent.trim().length > 0) {
+                const snap = {
+                  text: accumulatedContent.trim(),
+                  html: escapeHtml(accumulatedContent),
+                  ts: Date.now(),
+                  source: 'deepseek-sse'
+                };
+
+                // 检查是否已经有相同内容（避免重复）
+                const lastRecord = STORE.records[STORE.records.length - 1];
+                if (!lastRecord || lastRecord.text !== snap.text) {
+                  addRecord('replace', snap);
+                  debug('DeepSeek SSE: 已记录撤回', snap.text.substring(0, 50));
+                }
+              }
+              // 重置状态
+              accumulatedContent = '';
+              thinkingContent = '';
+              responseStarted = false;
+              currentMessageId = null;
+            }
+
+          } catch (e) {
+            // JSON 解析失败，忽略
+          }
+        }, false);
+
+        es.addEventListener('update_session', function(event) {
+          debug('DeepSeek SSE: update_session', event.data);
+        }, false);
+
+        es.addEventListener('title', function(event) {
+          debug('DeepSeek SSE: title', event.data);
+        }, false);
+
+        es.addEventListener('close', function(event) {
+          debug('DeepSeek SSE: close', event.data);
+          // 连接关闭时，如果还有未保存的内容，也记录下来
+          if (accumulatedContent.trim().length > 0 && responseStarted) {
+            const snap = {
+              text: accumulatedContent.trim(),
+              html: escapeHtml(accumulatedContent),
+              ts: Date.now(),
+              source: 'deepseek-sse-close'
+            };
+            const lastRecord = STORE.records[STORE.records.length - 1];
+            if (!lastRecord || lastRecord.text !== snap.text) {
+              addRecord('replace', snap);
+            }
+            accumulatedContent = '';
+            responseStarted = false;
+          }
+        }, false);
+      }
+
+      return es;
+    };
+
+    // 保持原始原型链
+    window.EventSource.prototype = originalEventSource.prototype;
   }
 
   // ============================================================
@@ -1161,6 +1407,8 @@
   function init() {
     // v1.0.3：先加载灵敏度配置（异步），再初始化监听
     loadConfig();
+    // v1.0.5: DeepSeek SSE 监听优先启动
+    setupDeepSeekSSEListener();
     ensureUI();
     observeRoot();
     // 初始确认快照
@@ -1169,6 +1417,19 @@
     lastTotalLength = nodes.reduce((s, n) => s + (n.textContent || "").trim().length, 0);
     bindRegenerateButtons();
     updateBadge();
+    // v1.0.5：初始化诊断 Toast
+    showInitDiagnostic(nodes.length);
+    if (DEBUG_MODE) {
+      debug("站点配置:", JSON.stringify({
+        name: SITE.name,
+        hostname: location.hostname,
+        contentSelectors: SITE.contentSelectors,
+        messageSelectors: SITE.messageSelectors,
+        assistantHints: SITE.assistantHints,
+        excludeSelectors: SITE.excludeSelectors.slice(0, 5),
+        detectedNodes: nodes.length
+      }, null, 2));
+    }
     // 定时刷新确认快照（兜底，确保非流式状态也有最新快照）
     setInterval(() => {
       if (!isStreaming) {
@@ -1195,8 +1456,7 @@
         setTimeout(observeRoot, 600);
       }
     }, 1000);
-    // 书签版：无扩展通信
-    console.log(`[AI撤回保存器 v1.0.3] 已在 ${SITE.name} (${location.hostname}) 启动。（书签版）`);
+    console.log(`[AI撤回保存器 v1.0.5] 已在 ${SITE.name} (${location.hostname}) 启动。（书签版）灵敏度: ${SENSITIVITY.name}，调试: ${DEBUG_MODE ? "开" : "关"}。检测到 ${nodes.length} 个 AI 内容节点。`);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
