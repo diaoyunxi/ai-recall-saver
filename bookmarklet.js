@@ -1409,7 +1409,13 @@
     box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
     const body = document.createElement("div");
     body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
-    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    if (asHtml) {
+      const doc = new DOMParser().parseFromString(r.html, "text/html");
+      doc.querySelectorAll("script,iframe,object,embed,form").forEach(el => el.remove());
+      body.innerHTML = doc.body.innerHTML;
+    } else {
+      body.textContent = r.text;
+    }
     box.appendChild(body);
     box.querySelector("a").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
