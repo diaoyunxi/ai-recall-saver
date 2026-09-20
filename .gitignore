@@ -1,0 +1,27 @@
+# Build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ruff cache
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Node
+node_modules/
+dist/
+build/
