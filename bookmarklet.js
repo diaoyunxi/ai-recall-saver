@@ -507,6 +507,37 @@
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  function sanitizeHtml(html) {
+    if (!html) return "";
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const root = template.content;
+    const dangerous = root.querySelectorAll("script, iframe, object, embed, form, base, link, meta, style");
+    dangerous.forEach((el) => el.remove());
+    const allEls = root.querySelectorAll("*");
+    allEls.forEach((el) => {
+      [...el.attributes].forEach((attr) => {
+        if (/^on/i.test(attr.name)) {
+          el.removeAttribute(attr.name);
+        } else if (/^(href|src|action|formaction|xlink:href)$/i.test(attr.name)) {
+          const val = (attr.value || "").trim().toLowerCase();
+          if (/^(javascript|data|vbscript):/i.test(val)) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      });
+      if (el.hasAttribute("style")) {
+        const style = el.getAttribute("style") || "";
+        if (/expression\s*\(|url\s*\(\s*['"]?\s*javascript:/i.test(style)) {
+          el.removeAttribute("style");
+        }
+      }
+    });
+    const div = document.createElement("div");
+    div.appendChild(template.content.cloneNode(true));
+    return div.innerHTML;
+  }
+
   function truncate(s, n) {
     s = (s || "").trim();
     return s.length > n ? s.slice(0, n) + "…" : s;
@@ -964,7 +995,7 @@
     block.innerHTML = `
       <div class="aisaver-restore-tag">⚠ 已撤回 · ${escapeHtml(reason)}</div>
       <div class="aisaver-restore-meta">${escapeHtml(SITE.name)} · ${formatTime(snapshot.ts)}</div>
-      <div class="aisaver-restore-content">${snapshot.html || escapeHtml(snapshot.text)}</div>
+      <div class="aisaver-restore-content">${snapshot.html ? sanitizeHtml(snapshot.html) : escapeHtml(snapshot.text)}</div>
       <div class="aisaver-restore-actions">
         <a data-act="copy">复制文本</a>
         <a data-act="locate">定位记录</a>
