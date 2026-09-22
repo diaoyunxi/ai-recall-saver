@@ -163,6 +163,47 @@
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  /**
+   * 净化 HTML 字符串，移除可能导致 XSS 的危险元素和属性 (CWE-79)。
+   * 移除: script, iframe, object, embed, form, base, link 标签
+   * 移除: 所有 on* 事件属性 (onclick, onerror, onload 等)
+   * 移除: javascript: / data: / vbscript: 协议的 href/src/action
+   */
+  function sanitizeHtml(html) {
+    if (!html) return "";
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const root = template.content;
+    // 移除危险标签
+    const dangerous = root.querySelectorAll("script, iframe, object, embed, form, base, link, meta, style");
+    dangerous.forEach((el) => el.remove());
+    // 移除 on* 事件属性和危险协议链接
+    const allEls = root.querySelectorAll("*");
+    allEls.forEach((el) => {
+      [...el.attributes].forEach((attr) => {
+        if (/^on/i.test(attr.name)) {
+          el.removeAttribute(attr.name);
+        } else if (/^(href|src|action|formaction|xlink:href)$/i.test(attr.name)) {
+          const val = (attr.value || "").trim().toLowerCase();
+          if (/^(javascript|data|vbscript):/i.test(val)) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      });
+      // 移除 style 属性中的 expression/url(javascript:)
+      if (el.hasAttribute("style")) {
+        const style = el.getAttribute("style") || "";
+        if (/expression\s*\(|url\s*\(\s*['"]?\s*javascript:/i.test(style)) {
+          el.removeAttribute("style");
+        }
+      }
+    });
+    // 使用 template 序列化回字符串
+    const div = document.createElement("div");
+    div.appendChild(template.content.cloneNode(true));
+    return div.innerHTML;
+  }
+
   function truncate(s, n) {
     s = (s || "").trim();
     return s.length > n ? s.slice(0, n) + "…" : s;
@@ -768,7 +809,7 @@
     box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
     const body = document.createElement("div");
     body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
-    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    if (asHtml) body.innerHTML = sanitizeHtml(r.html); else body.textContent = r.text;
     box.appendChild(body);
     box.querySelector("a").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
