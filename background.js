@@ -30,6 +30,17 @@ function setBadge(count) {
 // 存储各 tab 的撤回计数
 const tabCounts = {};
 
+// ---------- 通知点击监听（注册一次，避免 checkUpdate 重复调用导致监听器累积）----------
+chrome.notifications.onClicked.addListener(function _onNotifyClick(id) {
+  if (id === "aisaver-update") {
+    chrome.storage.local.get("updateInfo", (result) => {
+      const url = (result.updateInfo && result.updateInfo.url) || "";
+      if (url) chrome.tabs.create({ url });
+    });
+    chrome.notifications.clear(id);
+  }
+});
+
 // ---------- 自动更新检查 ----------
 function compareVersion(a, b) {
   // 返回 1 表示 a>b，-1 表示 a<b，0 相等
@@ -72,13 +83,7 @@ async function checkUpdate() {
         priority: 2,
         isClickable: true
       });
-      chrome.notifications.onClicked.addListener(function notifyClick(id) {
-        if (id === "aisaver-update") {
-          chrome.tabs.create({ url: info.url });
-          chrome.notifications.clear(id);
-          chrome.notifications.onClicked.removeListener(notifyClick);
-        }
-      });
+
     } else {
       await chrome.storage.local.set({ updateInfo: { hasUpdate: false, current: CURRENT_VERSION, latest: latestTag, checkedAt: Date.now() } });
     }
