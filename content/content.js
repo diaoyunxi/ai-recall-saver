@@ -627,7 +627,7 @@
       </div>`;
     block.querySelector('[data-act="copy"]').addEventListener("click", (e) => {
       e.preventDefault();
-      navigator.clipboard && navigator.clipboard.writeText(snapshot.text).then(() => showToast("已复制到剪贴板"));
+      navigator.clipboard && navigator.clipboard.writeText(snapshot.text).then(() => showToast("已复制到剪贴板")).catch(console.error);
     });
     block.querySelector('[data-act="locate"]').addEventListener("click", (e) => {
       e.preventDefault();
@@ -741,7 +741,7 @@
       if (!r) return;
       item.querySelector('[data-act="copy"]').addEventListener("click", (e) => {
         e.preventDefault();
-        navigator.clipboard && navigator.clipboard.writeText(r.text).then(() => showToast("已复制"));
+        navigator.clipboard && navigator.clipboard.writeText(r.text).then(() => showToast("已复制")).catch(console.error);
       });
       item.querySelector('[data-act="full"]').addEventListener("click", (e) => {
         e.preventDefault();

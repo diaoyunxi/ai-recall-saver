@@ -106,7 +106,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
     }
     case "CHECK_UPDATE":
-      checkUpdate().then(() => sendResponse({ ok: true }));
+      checkUpdate().then(() => sendResponse({ ok: true })).catch(console.error);
       return true; // 异步响应
     default:
       break;
