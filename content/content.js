@@ -38,6 +38,48 @@
   STORE.records = STORE.records || [];
 
   // ============================================================
+  // 记录持久化：保存到 chrome.storage.local，页面刷新后恢复
+  // ============================================================
+  const STORAGE_KEY = "aisaver_records_" + (typeof SITE !== "undefined" ? SITE.name : "default");
+  let _persistTimer = null;
+
+  function persistRecords() {
+    // 防抖：500ms 内多次修改只保存一次
+    if (_persistTimer) clearTimeout(_persistTimer);
+    _persistTimer = setTimeout(() => {
+      try {
+        // 只保存精简字段，避免存储过大（html 字段可能很大）
+        const slim = STORE.records.map(r => ({
+          id: r.id, site: r.site, url: r.url, reason: r.reason,
+          text: r.text, html: r.html, timestamp: r.timestamp,
+          capturedAt: r.capturedAt, preview: r.preview
+        }));
+        chrome.storage.local.set({ [STORAGE_KEY]: slim });
+      } catch (e) {
+        // 存储失败不影响功能
+        console.warn("[AI撤回保存器] 记录持久化失败:", e);
+      }
+    }, 500);
+  }
+
+  function loadPersistedRecords() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get(STORAGE_KEY, (res) => {
+          if (res && Array.isArray(res[STORAGE_KEY])) {
+            resolve(res[STORAGE_KEY]);
+          } else {
+            resolve([]);
+          }
+        });
+      } catch (e) {
+        console.warn("[AI撤回保存器] 读取持久化记录失败:", e);
+        resolve([]);
+      }
+    });
+  }
+
+  // ============================================================
   // 灵敏度配置（三档：严格 / 平衡 / 激进）
   // ============================================================
   // v1.0.3 新增：降低误报率方案
@@ -603,6 +645,7 @@
     };
     STORE.records.unshift(record);
     if (STORE.records.length > 500) STORE.records.length = 500;
+    persistRecords();
     debug("新增撤回记录", { reason, textLen: text.length, preview: truncate(text, 60) });
     onNewRecord(record);
     return true;
@@ -689,6 +732,7 @@
     panelEl.querySelector('[data-act="clear"]').addEventListener("click", () => {
       if (confirm("确定清空当前页面的所有撤回记录？（仅清空内存，不可恢复）")) {
         STORE.records.length = 0;
+        persistRecords();
         renderList();
         updateBadge();
         showToast("已清空");
@@ -1071,6 +1115,7 @@
       }
       if (msg.type === "CLEAR_RECORDS") {
         STORE.records.length = 0;
+        persistRecords();
         renderList();
         updateBadge();
         sendResponse({ ok: true });
@@ -1127,6 +1172,15 @@
       }
     }, 1000);
     try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
+    // 从 chrome.storage.local 恢复上次保存的记录
+    loadPersistedRecords().then(saved => {
+      if (saved.length > 0) {
+        STORE.records = saved;
+        debug(`从存储恢复了 ${saved.length} 条记录`);
+        renderList();
+        updateBadge();
+      }
+    });
     console.log(`[AI撤回保存器 v1.0.4] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }
 
