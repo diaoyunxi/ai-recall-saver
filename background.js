@@ -72,13 +72,7 @@ async function checkUpdate() {
         priority: 2,
         isClickable: true
       });
-      chrome.notifications.onClicked.addListener(function notifyClick(id) {
-        if (id === "aisaver-update") {
-          chrome.tabs.create({ url: info.url });
-          chrome.notifications.clear(id);
-          chrome.notifications.onClicked.removeListener(notifyClick);
-        }
-      });
+      // 通知点击监听器已移至模块级（第 86 行），避免 checkUpdate 多次调用导致监听器累积
     } else {
       await chrome.storage.local.set({ updateInfo: { hasUpdate: false, current: CURRENT_VERSION, latest: latestTag, checkedAt: Date.now() } });
     }
@@ -86,6 +80,17 @@ async function checkUpdate() {
     // 网络错误静默
   }
 }
+
+// ---------- 更新通知点击（模块级注册，避免 checkUpdate 重复添加导致内存泄漏） ----------
+chrome.notifications.onClicked.addListener((id) => {
+  if (id === "aisaver-update") {
+    chrome.storage.local.get("updateInfo", (res) => {
+      const url = res?.updateInfo?.url;
+      if (url) chrome.tabs.create({ url });
+    });
+    chrome.notifications.clear(id);
+  }
+});
 
 // ---------- 消息中转 ----------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
