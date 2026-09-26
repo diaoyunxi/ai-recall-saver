@@ -159,7 +159,8 @@
     return (h >>> 0).toString(36);
   }
 
-  function escapeHtml(s) {
+  /** @security All user-generated content MUST be escaped via escapeHtml() before innerHTML insertion */
+function escapeHtml(s) {
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
