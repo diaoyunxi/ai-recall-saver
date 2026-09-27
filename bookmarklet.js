@@ -507,6 +507,20 @@
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  /** 简易 HTML 净化：移除 script/iframe/object/embed/form 标签及 on* 事件属性，防止 XSS */
+  function sanitizeHtml(html) {
+    if (!html) return "";
+    // 移除危险标签（含内容）
+    let clean = html.replace(/<(script|iframe|object|embed|form|applet)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
+    // 移除自闭合的危险标签
+    clean = clean.replace(/<(script|iframe|object|embed|form|applet)\b[^>]*\/?>/gi, "");
+    // 移除 on* 事件属性（如 onclick, onerror, onload 等）
+    clean = clean.replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "");
+    // 移除 javascript: 协议链接
+    clean = clean.replace(/href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/gi, 'href="#"');
+    return clean;
+  }
+
   function truncate(s, n) {
     s = (s || "").trim();
     return s.length > n ? s.slice(0, n) + "…" : s;
@@ -964,7 +978,7 @@
     block.innerHTML = `
       <div class="aisaver-restore-tag">⚠ 已撤回 · ${escapeHtml(reason)}</div>
       <div class="aisaver-restore-meta">${escapeHtml(SITE.name)} · ${formatTime(snapshot.ts)}</div>
-      <div class="aisaver-restore-content">${snapshot.html || escapeHtml(snapshot.text)}</div>
+      <div class="aisaver-restore-content">${sanitizeHtml(snapshot.html) || escapeHtml(snapshot.text)}</div>
       <div class="aisaver-restore-actions">
         <a data-act="copy">复制文本</a>
         <a data-act="locate">定位记录</a>
@@ -1409,7 +1423,7 @@
     box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
     const body = document.createElement("div");
     body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
-    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    if (asHtml) body.innerHTML = sanitizeHtml(r.html); else body.textContent = r.text;
     box.appendChild(body);
     box.querySelector("a").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
