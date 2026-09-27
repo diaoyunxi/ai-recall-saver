@@ -1,13 +1,19 @@
 # Dependencies
 node_modules/
 __pycache__/
+*.py[cod]
 *.pyc
 *.pyo
+*$py.class
+*.so
+*.egg-info/
 
 # Build output
 dist/
 build/
-*.egg-info/
+
+# ruff cache
+.ruff_cache/
 
 # Environment
 .env
