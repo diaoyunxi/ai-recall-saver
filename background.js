@@ -30,6 +30,16 @@ function setBadge(count) {
 // 存储各 tab 的撤回计数
 const tabCounts = {};
 
+
+// 更新通知点击处理（模块级，避免 checkUpdate 重复调用导致累积）
+let pendingUpdateUrl = null;
+chrome.notifications.onClicked.addListener((id) => {
+  if (id === "aisaver-update" && pendingUpdateUrl) {
+    chrome.tabs.create({ url: pendingUpdateUrl });
+    chrome.notifications.clear(id);
+    pendingUpdateUrl = null;
+  }
+});
 // ---------- 自动更新检查 ----------
 function compareVersion(a, b) {
   // 返回 1 表示 a>b，-1 表示 a<b，0 相等
@@ -72,9 +82,7 @@ async function checkUpdate() {
         priority: 2,
         isClickable: true
       });
-      chrome.notifications.onClicked.addListener(function notifyClick(id) {
-        if (id === "aisaver-update") {
-          chrome.tabs.create({ url: info.url });
+      pendingUpdateUrl = info.url;
           chrome.notifications.clear(id);
           chrome.notifications.onClicked.removeListener(notifyClick);
         }
