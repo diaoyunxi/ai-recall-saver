@@ -1,11 +1,24 @@
-# Build artifacts
+# Dependencies
+node_modules/
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
 *$py.class
 *.so
+*.egg-info/
+
+# Build output
+dist/
+build/
 
 # ruff cache
 .ruff_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -17,11 +30,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
-.env.local
+# Logs
+*.log
+logs/
 
-# Node
-node_modules/
-dist/
-build/
+# Temp
+tmp/
+.temp/
