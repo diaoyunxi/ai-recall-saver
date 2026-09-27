@@ -38,6 +38,48 @@
   STORE.records = STORE.records || [];
 
   // ============================================================
+  // 记录持久化：保存到 chrome.storage.local，页面刷新后恢复
+  // ============================================================
+  const STORAGE_KEY = "aisaver_records_" + (typeof SITE !== "undefined" ? SITE.name : "default");
+  let _persistTimer = null;
+
+  function persistRecords() {
+    // 防抖：500ms 内多次修改只保存一次
+    if (_persistTimer) clearTimeout(_persistTimer);
+    _persistTimer = setTimeout(() => {
+      try {
+        // 只保存精简字段，避免存储过大（html 字段可能很大）
+        const slim = STORE.records.map(r => ({
+          id: r.id, site: r.site, url: r.url, reason: r.reason,
+          text: r.text, html: r.html, timestamp: r.timestamp,
+          capturedAt: r.capturedAt, preview: r.preview
+        }));
+        chrome.storage.local.set({ [STORAGE_KEY]: slim });
+      } catch (e) {
+        // 存储失败不影响功能
+        console.warn("[AI撤回保存器] 记录持久化失败:", e);
+      }
+    }, 500);
+  }
+
+  function loadPersistedRecords() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get(STORAGE_KEY, (res) => {
+          if (res && Array.isArray(res[STORAGE_KEY])) {
+            resolve(res[STORAGE_KEY]);
+          } else {
+            resolve([]);
+          }
+        });
+      } catch (e) {
+        console.warn("[AI撤回保存器] 读取持久化记录失败:", e);
+        resolve([]);
+      }
+    });
+  }
+
+  // ============================================================
   // 灵敏度配置（三档：严格 / 平衡 / 激进）
   // ============================================================
   // v1.0.3 新增：降低误报率方案
@@ -162,6 +204,43 @@
   /** @security All user-generated content MUST be escaped via escapeHtml() before innerHTML insertion */
 function escapeHtml(s) {
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  /**
+   * 净化 HTML 字符串，移除可能导致 XSS 的危险元素和属性 (CWE-79)。
+   * 移除: script, iframe, object, embed, form, base, link 标签
+   * 移除: 所有 on* 事件属性 (onclick, onerror, onload 等)
+   * 移除: javascript: / data: / vbscript: 协议的 href/src/action
+   */
+  function sanitizeHtml(html) {
+    if (!html) return "";
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const root = template.content;
+    const dangerous = root.querySelectorAll("script, iframe, object, embed, form, base, link, meta, style");
+    dangerous.forEach((el) => el.remove());
+    const allEls = root.querySelectorAll("*");
+    allEls.forEach((el) => {
+      [...el.attributes].forEach((attr) => {
+        if (/^on/i.test(attr.name)) {
+          el.removeAttribute(attr.name);
+        } else if (/^(href|src|action|formaction|xlink:href)$/i.test(attr.name)) {
+          const val = (attr.value || "").trim().toLowerCase();
+          if (/^(javascript|data|vbscript):/i.test(val)) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      });
+      if (el.hasAttribute("style")) {
+        const style = el.getAttribute("style") || "";
+        if (/expression\s*\(|url\s*\(\s*['"]?\s*javascript:/i.test(style)) {
+          el.removeAttribute("style");
+        }
+      }
+    });
+    const div = document.createElement("div");
+    div.appendChild(template.content.cloneNode(true));
+    return div.innerHTML;
   }
 
   function truncate(s, n) {
@@ -604,6 +683,7 @@ function escapeHtml(s) {
     };
     STORE.records.unshift(record);
     if (STORE.records.length > 500) STORE.records.length = 500;
+    persistRecords();
     debug("新增撤回记录", { reason, textLen: text.length, preview: truncate(text, 60) });
     onNewRecord(record);
     return true;
@@ -621,14 +701,14 @@ function escapeHtml(s) {
     block.innerHTML = `
       <div class="aisaver-restore-tag">⚠ 已撤回 · ${escapeHtml(reason)}</div>
       <div class="aisaver-restore-meta">${escapeHtml(SITE.name)} · ${formatTime(snapshot.ts)}</div>
-      <div class="aisaver-restore-content">${snapshot.html || escapeHtml(snapshot.text)}</div>
+      <div class="aisaver-restore-content">${snapshot.html ? sanitizeHtml(snapshot.html) : escapeHtml(snapshot.text)}</div>
       <div class="aisaver-restore-actions">
         <a data-act="copy">复制文本</a>
         <a data-act="locate">定位记录</a>
       </div>`;
     block.querySelector('[data-act="copy"]').addEventListener("click", (e) => {
       e.preventDefault();
-      navigator.clipboard && navigator.clipboard.writeText(snapshot.text).then(() => showToast("已复制到剪贴板"));
+      navigator.clipboard && navigator.clipboard.writeText(snapshot.text).then(() => showToast("已复制到剪贴板")).catch(console.error);
     });
     block.querySelector('[data-act="locate"]').addEventListener("click", (e) => {
       e.preventDefault();
@@ -690,6 +770,7 @@ function escapeHtml(s) {
     panelEl.querySelector('[data-act="clear"]').addEventListener("click", () => {
       if (confirm("确定清空当前页面的所有撤回记录？（仅清空内存，不可恢复）")) {
         STORE.records.length = 0;
+        persistRecords();
         renderList();
         updateBadge();
         showToast("已清空");
@@ -742,7 +823,7 @@ function escapeHtml(s) {
       if (!r) return;
       item.querySelector('[data-act="copy"]').addEventListener("click", (e) => {
         e.preventDefault();
-        navigator.clipboard && navigator.clipboard.writeText(r.text).then(() => showToast("已复制"));
+        navigator.clipboard && navigator.clipboard.writeText(r.text).then(() => showToast("已复制")).catch(console.error);
       });
       item.querySelector('[data-act="full"]').addEventListener("click", (e) => {
         e.preventDefault();
@@ -769,7 +850,7 @@ function escapeHtml(s) {
     box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
     const body = document.createElement("div");
     body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
-    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    if (asHtml) body.innerHTML = sanitizeHtml(r.html); else body.textContent = r.text;
     box.appendChild(body);
     box.querySelector("a").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
@@ -1072,6 +1153,7 @@ function escapeHtml(s) {
       }
       if (msg.type === "CLEAR_RECORDS") {
         STORE.records.length = 0;
+        persistRecords();
         renderList();
         updateBadge();
         sendResponse({ ok: true });
@@ -1128,6 +1210,15 @@ function escapeHtml(s) {
       }
     }, 1000);
     try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
+    // 从 chrome.storage.local 恢复上次保存的记录
+    loadPersistedRecords().then(saved => {
+      if (saved.length > 0) {
+        STORE.records = saved;
+        debug(`从存储恢复了 ${saved.length} 条记录`);
+        renderList();
+        updateBadge();
+      }
+    });
     console.log(`[AI撤回保存器 v1.0.4] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }
 
