@@ -131,9 +131,6 @@ ai-recall-saver/
 │   ├── popup.js               # 弹窗逻辑
 │   └── popup.css              # 弹窗样式
 ├── icons/                     # 扩展图标 PNG
-├── scripts/
-│   ├── gen_icons.py           # 图标生成脚本
-│   └── pack_crx.py            # CRX3 打包脚本
 └── README.md
 ```
 
@@ -141,17 +138,7 @@ ai-recall-saver/
 
 ## ⚙️ 打包
 
-本项目提供 `scripts/pack_crx.py` 可一键生成 `.crx3` 文件：
-
-```bash
-# 安装依赖
-pip install cryptography
-
-# 打包（自动生成私钥或复用已有私钥）
-python scripts/pack_crx.py
-```
-
-输出文件位于 `dist/ai-recall-saver-v<版本>.crx`。
+> **TODO**: `scripts/pack_crx.py` 打包脚本尚未实现。目前可通过 Chrome 扩展管理页手动加载未打包扩展或打包为 CRX。
 
 ---
 
