@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+*.crx
+*.pem
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Temp files
+*.tmp
+*.bak
+
+# Wrangler / Cloudflare
+.wrangler/
