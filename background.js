@@ -63,21 +63,15 @@ async function checkUpdate() {
         checkedAt: Date.now()
       };
       await chrome.storage.local.set({ updateInfo: info });
-      // 桌面通知
-      chrome.notifications.create("aisaver-update", {
+      // 桌面通知（使用固定 notification ID，重复调用 create 会更新而非堆叠）
+      const NOTIFY_ID = "aisaver-update";
+      chrome.notifications.create(NOTIFY_ID, {
         type: "basic",
         iconUrl: "icons/icon128.png",
         title: "AI撤回保存器 发现新版本",
         message: `新版本 ${latestTag} 已发布（当前 v${CURRENT_VERSION}），点击前往更新。`,
         priority: 2,
         isClickable: true
-      });
-      chrome.notifications.onClicked.addListener(function notifyClick(id) {
-        if (id === "aisaver-update") {
-          chrome.tabs.create({ url: info.url });
-          chrome.notifications.clear(id);
-          chrome.notifications.onClicked.removeListener(notifyClick);
-        }
       });
     } else {
       await chrome.storage.local.set({ updateInfo: { hasUpdate: false, current: CURRENT_VERSION, latest: latestTag, checkedAt: Date.now() } });
@@ -86,6 +80,18 @@ async function checkUpdate() {
     // 网络错误静默
   }
 }
+
+// 更新通知点击处理（模块级注册一次，避免在 checkUpdate 内重复添加导致泄漏）
+// 当通知被关闭而未点击时，不会累积未清理的监听器
+chrome.notifications.onClicked.addListener((id) => {
+  if (id === "aisaver-update") {
+    chrome.storage.local.get("updateInfo", (result) => {
+      const url = (result && result.updateInfo && result.updateInfo.url) || "";
+      if (url) chrome.tabs.create({ url });
+    });
+    chrome.notifications.clear(id);
+  }
+});
 
 // ---------- 消息中转 ----------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
