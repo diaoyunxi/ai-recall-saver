@@ -115,6 +115,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ---------- 右键菜单 ----------
 chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
   chrome.contextMenus.create({
     id: "aisaver-toggle-panel",
     title: "AI撤回保存器：打开/关闭历史浮层",
