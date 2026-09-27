@@ -202,7 +202,7 @@
   }
 
   /** @security All user-generated content MUST be escaped via escapeHtml() before innerHTML insertion */
-function escapeHtml(s) {
+  function escapeHtml(s) {
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
