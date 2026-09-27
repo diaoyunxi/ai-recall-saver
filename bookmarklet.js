@@ -964,7 +964,7 @@
     block.innerHTML = `
       <div class="aisaver-restore-tag">⚠ 已撤回 · ${escapeHtml(reason)}</div>
       <div class="aisaver-restore-meta">${escapeHtml(SITE.name)} · ${formatTime(snapshot.ts)}</div>
-      <div class="aisaver-restore-content">${snapshot.html || escapeHtml(snapshot.text)}</div>
+      <div class="aisaver-restore-content">${escapeHtml(snapshot.html || snapshot.text)}</div>
       <div class="aisaver-restore-actions">
         <a data-act="copy">复制文本</a>
         <a data-act="locate">定位记录</a>
