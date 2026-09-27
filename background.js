@@ -63,21 +63,15 @@ async function checkUpdate() {
         checkedAt: Date.now()
       };
       await chrome.storage.local.set({ updateInfo: info });
-      // 桌面通知
-      chrome.notifications.create("aisaver-update", {
+      // 桌面通知（使用固定 notification ID，重复调用 create 会更新而非堆叠）
+      const NOTIFY_ID = "aisaver-update";
+      chrome.notifications.create(NOTIFY_ID, {
         type: "basic",
         iconUrl: "icons/icon128.png",
         title: "AI撤回保存器 发现新版本",
         message: `新版本 ${latestTag} 已发布（当前 v${CURRENT_VERSION}），点击前往更新。`,
         priority: 2,
         isClickable: true
-      });
-      chrome.notifications.onClicked.addListener(function notifyClick(id) {
-        if (id === "aisaver-update") {
-          chrome.tabs.create({ url: info.url });
-          chrome.notifications.clear(id);
-          chrome.notifications.onClicked.removeListener(notifyClick);
-        }
       });
     } else {
       await chrome.storage.local.set({ updateInfo: { hasUpdate: false, current: CURRENT_VERSION, latest: latestTag, checkedAt: Date.now() } });
@@ -86,6 +80,18 @@ async function checkUpdate() {
     // 网络错误静默
   }
 }
+
+// 更新通知点击处理（模块级注册一次，避免在 checkUpdate 内重复添加导致泄漏）
+// 当通知被关闭而未点击时，不会累积未清理的监听器
+chrome.notifications.onClicked.addListener((id) => {
+  if (id === "aisaver-update") {
+    chrome.storage.local.get("updateInfo", (result) => {
+      const url = (result && result.updateInfo && result.updateInfo.url) || "";
+      if (url) chrome.tabs.create({ url });
+    });
+    chrome.notifications.clear(id);
+  }
+});
 
 // ---------- 消息中转 ----------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -106,7 +112,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
     }
     case "CHECK_UPDATE":
-      checkUpdate().then(() => sendResponse({ ok: true }));
+      checkUpdate().then(() => sendResponse({ ok: true })).catch(console.error);
       return true; // 异步响应
     default:
       break;
@@ -115,11 +121,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ---------- 右键菜单 ----------
 chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
   chrome.contextMenus.create({
     id: "aisaver-toggle-panel",
     title: "AI撤回保存器：打开/关闭历史浮层",
     contexts: ["all"]
   });
+
+// 扩展被禁用或浏览器关闭时清理临时数据
+chrome.runtime.onSuspend.addListener(() => {
+  // 清理临时缓存数据
+  chrome.storage.local.remove(['tempData', 'pendingRequests'], () => {
+    console.log('[AI Recall Saver] 清理临时数据完成');
+  });
+});
   setBadge(0);
   // 创建定时闹钟：每 6 小时检查一次更新
   chrome.alarms.create("aisaver-update-check", { periodInMinutes: 360 });
@@ -140,6 +155,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // 切换标签页时更新角标
 chrome.tabs.onActivated.addListener((activeInfo) => {
   setBadge(tabCounts[activeInfo.tabId] || 0);
+});
+
+// 标签页关闭时清理 tabCounts，防止长期运行时内存泄漏
+chrome.tabs.onRemoved.addListener((tabId) => {
+  delete tabCounts[tabId];
 });
 
 // 浏览器启动时检查更新
