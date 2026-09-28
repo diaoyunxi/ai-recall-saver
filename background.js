@@ -122,11 +122,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---------- 右键菜单 ----------
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
-  chrome.contextMenus.create({
-    id: "aisaver-toggle-panel",
-    title: "AI撤回保存器：打开/关闭历史浮层",
-    contexts: ["all"]
+    chrome.contextMenus.create({
+      id: "aisaver-toggle-panel",
+      title: "AI撤回保存器：打开/关闭历史浮层",
+      contexts: ["all"]
+    });
   });
+  setBadge(0);
+  // 创建定时闹钟：每 6 小时检查一次更新
+  chrome.alarms.create("aisaver-update-check", { periodInMinutes: 360 });
+  // 安装/更新后立即检查一次
+  checkUpdate();
+});
 
 // 扩展被禁用或浏览器关闭时清理临时数据
 chrome.runtime.onSuspend.addListener(() => {
@@ -134,12 +141,6 @@ chrome.runtime.onSuspend.addListener(() => {
   chrome.storage.local.remove(['tempData', 'pendingRequests'], () => {
     console.log('[AI Recall Saver] 清理临时数据完成');
   });
-});
-  setBadge(0);
-  // 创建定时闹钟：每 6 小时检查一次更新
-  chrome.alarms.create("aisaver-update-check", { periodInMinutes: 360 });
-  // 安装/更新后立即检查一次
-  checkUpdate();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
