@@ -15,6 +15,29 @@ const RELEASE_API = `https://api.github.com/repos/${GITHUB_OWNER}/${REPO_NAME}/r
 const MANIFEST = chrome.runtime.getManifest();
 const CURRENT_VERSION = MANIFEST.version;
 
+
+// =====================================================================
+// Storage Error Handling Helpers
+// =====================================================================
+async function safeStorageSet(data) {
+  try {
+    await chrome.storage.local.set(data);
+    return true;
+  } catch (e) {
+    console.error('[ai-recall-saver] storage.set failed:', e);
+    return false;
+  }
+}
+
+async function safeStorageGet(keys) {
+  try {
+    return await chrome.storage.local.get(keys);
+  } catch (e) {
+    console.error('[ai-recall-saver] storage.get failed:', e);
+    return {};
+  }
+}
+
 // ---------- 角标 ----------
 function setBadge(count) {
   const text = count > 0 ? (count > 99 ? "99+" : String(count)) : "";
