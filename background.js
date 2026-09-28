@@ -142,6 +142,11 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
   setBadge(tabCounts[activeInfo.tabId] || 0);
 });
 
+// 标签页关闭时清理计数，防止 tabCounts 条目无限积累导致内存泄漏
+chrome.tabs.onRemoved.addListener((tabId) => {
+  delete tabCounts[tabId];
+});
+
 // 浏览器启动时检查更新
 chrome.runtime.onStartup.addListener(() => {
   checkUpdate();
