@@ -163,6 +163,21 @@
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  /**
+   * 简易 HTML 净化：移除 <script>、<iframe> 等危险标签、事件属性及 javascript: 协议。
+   * 用于安全渲染用户提供的 HTML 内容（CWE-79）。
+   */
+  function sanitizeHtml(html) {
+    if (!html) return "";
+    return html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+      .replace(/<\s*script\b[^>]*>/gi, "")
+      .replace(/<\s*iframe\b[^>]*>/gi, "")
+      .replace(/\bon\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+      .replace(/javascript\s*:/gi, "");
+  }
+
   function truncate(s, n) {
     s = (s || "").trim();
     return s.length > n ? s.slice(0, n) + "…" : s;
@@ -620,7 +635,7 @@
     block.innerHTML = `
       <div class="aisaver-restore-tag">⚠ 已撤回 · ${escapeHtml(reason)}</div>
       <div class="aisaver-restore-meta">${escapeHtml(SITE.name)} · ${formatTime(snapshot.ts)}</div>
-      <div class="aisaver-restore-content">${snapshot.html || escapeHtml(snapshot.text)}</div>
+      <div class="aisaver-restore-content">${snapshot.html ? sanitizeHtml(snapshot.html) : escapeHtml(snapshot.text)}</div>
       <div class="aisaver-restore-actions">
         <a data-act="copy">复制文本</a>
         <a data-act="locate">定位记录</a>
