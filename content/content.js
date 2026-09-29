@@ -768,7 +768,22 @@
     box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
     const body = document.createElement("div");
     body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
-    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    if (asHtml) {
+      // 安全净化：使用 DOMParser 解析后移除 script/event handler，防止存储型 XSS
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(r.html || "", "text/html");
+      doc.querySelectorAll("script,iframe,object,embed,form").forEach(el => el.remove());
+      doc.querySelectorAll("*").forEach(el => {
+        for (const attr of [...el.attributes]) {
+          if (attr.name.startsWith("on") || attr.value.trim().toLowerCase().startsWith("javascript:")) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      });
+      body.innerHTML = doc.body.innerHTML;
+    } else {
+      body.textContent = r.text;
+    }
     box.appendChild(body);
     box.querySelector("a").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
