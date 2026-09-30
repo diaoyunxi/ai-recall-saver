@@ -466,7 +466,7 @@
       const args = Array.prototype.slice.call(arguments);
       args.unshift("[AI撤回保存器]");
       console.debug.apply(console, args);
-    } catch (e) {}
+    } catch (e) { console.debug("[ai-recall-saver]", e); }
   }
 
   // 从 window.__AISaverConfig__ 加载配置（书签版不使用 chrome.storage）
@@ -478,7 +478,7 @@
       }
       DEBUG_MODE = !!cfg.debugMode;
       debug("配置已加载", { sensitivity: SENSITIVITY.name, debug: DEBUG_MODE });
-    } catch (e) {}
+    } catch (e) { console.debug("[ai-recall-saver]", e); }
   }
 
   const SITE = getSiteConfig(location.hostname);
@@ -625,7 +625,7 @@
         if (item.querySelector && item.querySelector(sel)) {
           if ((item.textContent || "").trim().length > 20) return true;
         }
-      } catch (e) {}
+      } catch (e) { console.debug("[ai-recall-saver]", e); }
     }
     return false;
   }
@@ -1014,7 +1014,7 @@
       } else {
         parentNode.appendChild(block);
       }
-    } catch (e) {}
+    } catch (e) { console.debug("[ai-recall-saver]", e); }
   }
 
   // ============================================================
