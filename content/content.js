@@ -1218,7 +1218,7 @@ function escapeHtml(s) {
         renderList();
         updateBadge();
       }
-    });
+    }).catch(err => debug(`存储恢复失败: ${err}`));
     console.log(`[AI撤回保存器 v1.0.4] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }
 
