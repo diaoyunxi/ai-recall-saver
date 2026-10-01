@@ -132,7 +132,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onSuspend.addListener(() => {
   // 清理临时缓存数据
   chrome.storage.local.remove(['tempData', 'pendingRequests'], () => {
-    console.log('[AI Recall Saver] 清理临时数据完成');
+    // console.log('[AI Recall Saver] 清理临时数据完成');
   });
 });
   setBadge(0);
