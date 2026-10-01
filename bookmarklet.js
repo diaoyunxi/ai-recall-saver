@@ -1440,7 +1440,9 @@
     box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>${escapeHtml(r.site)} · ${reasonLabel(r.reason)}</b><a style="cursor:pointer;color:#e85d5d">关闭</a></div>`;
     const body = document.createElement("div");
     body.style.cssText = "white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7";
-    if (asHtml) body.innerHTML = r.html; else body.textContent = r.text;
+    // r.html 来自 AI 网页抓取的原始 HTML，属于不可信内容，
+    // 必须以 sanitizeHtml 净化后再写入 innerHTML，防止 XSS 注入（与 content/content.js 保持一致）
+    if (asHtml) body.innerHTML = sanitizeHtml(r.html); else body.textContent = r.text;
     box.appendChild(body);
     box.querySelector("a").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
