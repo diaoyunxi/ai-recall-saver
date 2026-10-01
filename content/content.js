@@ -1,5 +1,5 @@
 /**
- * AI撤回保存器 - 核心内容脚本 (v1.0.4 降低误报率版)
+ * AI撤回保存器 - 核心内容脚本 (v1.0.5 降低误报率版)
  *
  * v1.0.0 的问题：
  *  - 流式输出时 markdown 重渲染触发海量 childList 删除事件，被误判为"撤回"，
@@ -14,7 +14,7 @@
  *  5. content nodes 缓存：避免每次 querySelectorAll
  *  6. observer 降级：去掉 characterData，只保留 childList + 必要 attributes
  *
- * v1.0.4 降低误报率方案（重点修复"内容覆盖误报"与"节点隐藏误报"）：
+ * v1.0.5 降低误报率方案（重点修复"内容覆盖误报"与"节点隐藏误报"）：
  *  1. SENSITIVITY 三档配置（strict 默认 / balanced / aggressive），阈值与延迟全可配置
  *     由 popup 写入 chrome.storage.local.sensitivity，content 启动读取并监听变化
  *  2. handleHide 增加延迟确认（严格 1000ms）+ 恢复可见取消 + 可见相似度二次校验
@@ -888,7 +888,7 @@ function escapeHtml(s) {
   // ============================================================
   // DeepSeek SSE 监听：直接从 completion 请求提取回复
   // ============================================================
-  // v1.0.4: 针对 DeepSeek 添加 SSE 监听，从 completion 请求的响应中直接提取 AI 回复
+  // v1.0.5: 针对 DeepSeek 添加 SSE 监听，从 completion 请求的响应中直接提取 AI 回复
   // 监听 EventSource 消息，解析 data 中的 content 字段
   function setupDeepSeekSSEListener() {
     if (location.hostname !== 'chat.deepseek.com') return;
@@ -1173,7 +1173,7 @@ function escapeHtml(s) {
   function init() {
     // v1.0.3：先加载灵敏度配置（异步），再初始化监听
     loadConfig();
-    // v1.0.4: DeepSeek SSE 监听优先启动
+    // v1.0.5: DeepSeek SSE 监听优先启动
     setupDeepSeekSSEListener();
     ensureUI();
     observeRoot();
@@ -1218,8 +1218,8 @@ function escapeHtml(s) {
         renderList();
         updateBadge();
       }
-    });
-    console.log(`[AI撤回保存器 v1.0.4] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
+    }).catch(err => debug(`存储恢复失败: ${err}`));
+    console.log(`[AI撤回保存器 v1.0.5] 已在 ${SITE.name} (${location.hostname}) 启动。当前灵敏度: ${SENSITIVITY.name}，调试日志: ${DEBUG_MODE ? "开" : "关"}。`);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
