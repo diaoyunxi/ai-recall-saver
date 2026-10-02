@@ -142,7 +142,7 @@
       const args = Array.prototype.slice.call(arguments);
       args.unshift("[AI撤回保存器]");
       console.debug.apply(console, args);
-    } catch (e) {}
+    } catch (e) { console.debug("[recall-saver]", e); }
   }
 
   // 从 chrome.storage 加载灵敏度与调试开关，并监听变化
@@ -166,7 +166,7 @@
           debug("调试模式", DEBUG_MODE ? "开启" : "关闭");
         }
       });
-    } catch (e) {}
+    } catch (e) { console.debug("[recall-saver]", e); }
   }
 
   const SITE = window.AISaverSites
@@ -268,7 +268,7 @@ function escapeHtml(s) {
     if (node.hasAttribute && node.hasAttribute("data-aisaver")) return true;
     if (node.id && node.id.indexOf("aisaver") === 0) return true;
     for (const sel of SITE.excludeSelectors) {
-      try { if (node.matches && node.matches(sel)) return true; } catch (e) {}
+      try { if (node.matches && node.matches(sel)) return true; } catch (e) { console.debug("[recall-saver]", e); }
     }
     return false;
   }
@@ -330,7 +330,7 @@ function escapeHtml(s) {
         if (item.querySelector && item.querySelector(sel)) {
           if ((item.textContent || "").trim().length > 20) return true;
         }
-      } catch (e) {}
+      } catch (e) { console.debug("[recall-saver]", e); }
     }
     return false;
   }
@@ -352,7 +352,7 @@ function escapeHtml(s) {
     const cls = (node.className && node.className.toString().toLowerCase()) || "";
     if (cls.indexOf("markdown") >= 0) return true;
     for (const sel of SITE.contentSelectors) {
-      try { if (node.matches && node.matches(sel)) return true; } catch (e) {}
+      try { if (node.matches && node.matches(sel)) return true; } catch (e) { console.debug("[recall-saver]", e); }
     }
     return false;
   }
@@ -603,7 +603,7 @@ function escapeHtml(s) {
     if (el === document.body || el === document.documentElement) return true;
     if (el.tagName === "MAIN") return true;
     for (const sel of SITE.rootSelectors) {
-      try { if (el.matches && el.matches(sel)) return true; } catch (e) {}
+      try { if (el.matches && el.matches(sel)) return true; } catch (e) { console.debug("[recall-saver]", e); }
     }
     return false;
   }
@@ -720,7 +720,7 @@ function escapeHtml(s) {
       } else {
         parentNode.appendChild(block);
       }
-    } catch (e) {}
+    } catch (e) { console.debug("[recall-saver]", e); }
   }
 
   // ============================================================
@@ -876,7 +876,7 @@ function escapeHtml(s) {
       badgeEl.textContent = n > 99 ? "99+" : n;
       badgeEl.style.display = n > 0 ? "" : "none";
     }
-    try { chrome.runtime.sendMessage({ type: "UPDATE_BADGE", count: n }); } catch (e) {}
+    try { chrome.runtime.sendMessage({ type: "UPDATE_BADGE", count: n }); } catch (e) { console.debug("[recall-saver]", e); }
   }
 
   function onNewRecord(record) {
@@ -1085,7 +1085,7 @@ function escapeHtml(s) {
 
   let observer = null;
   function observeRoot() {
-    if (observer) { try { observer.disconnect(); } catch (e) {} }
+    if (observer) { try { observer.disconnect(); } catch (e) { console.debug("[recall-saver]", e); } }
     let root = null;
     for (const sel of SITE.rootSelectors) {
       try { root = $(sel); } catch (e) { continue; }
@@ -1165,7 +1165,7 @@ function escapeHtml(s) {
         return;
       }
     });
-  } catch (e) {}
+  } catch (e) { console.debug("[recall-saver]", e); }
 
   // ============================================================
   // 初始化
@@ -1209,7 +1209,7 @@ function escapeHtml(s) {
         setTimeout(observeRoot, 600);
       }
     }, 1000);
-    try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) {}
+    try { chrome.runtime.sendMessage({ type: "CONTENT_READY", site: SITE.name }); } catch (e) { console.debug("[recall-saver]", e); }
     // 从 chrome.storage.local 恢复上次保存的记录
     loadPersistedRecords().then(saved => {
       if (saved.length > 0) {
