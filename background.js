@@ -16,6 +16,9 @@ const MANIFEST = chrome.runtime.getManifest();
 const CURRENT_VERSION = MANIFEST.version;
 
 // ---------- 角标 ----------
+const DEBUG = false;
+const debugLog = (...args) => { if (DEBUG) debugLog('[ai-recall-saver]', ...args); };
+
 function setBadge(count) {
   const text = count > 0 ? (count > 99 ? "99+" : String(count)) : "";
   chrome.action.setBadgeText({ text });
