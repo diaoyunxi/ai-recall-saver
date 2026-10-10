@@ -698,6 +698,7 @@ function escapeHtml(s) {
     const block = document.createElement("div");
     block.className = "aisaver-restore-block" + (dark ? " aisaver-dark" : "");
     block.setAttribute("data-aisaver", "1");
+    // @security-audit: 确认此处所有动态内容已通过 escapeHtml() 转义
     block.innerHTML = `
       <div class="aisaver-restore-tag">⚠ 已撤回 · ${escapeHtml(reason)}</div>
       <div class="aisaver-restore-meta">${escapeHtml(SITE.name)} · ${formatTime(snapshot.ts)}</div>
@@ -803,6 +804,7 @@ function escapeHtml(s) {
       listEl.innerHTML = `<div class="aisaver-empty">暂无撤回记录<br><span style="font-size:12px;color:#bbb">当 AI 回复被撤回/重新生成/删除时，会自动保存在这里</span></div>`;
       return;
     }
+    // @security-audit: 确认 r 对象的所有用户输入字段均通过 escapeHtml() 转义
     listEl.innerHTML = STORE.records.map((r) => `
       <div class="aisaver-item" data-id="${r.id}">
         <div class="aisaver-item-head">
