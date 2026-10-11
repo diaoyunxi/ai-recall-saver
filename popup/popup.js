@@ -70,7 +70,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (info && info.hasUpdate) {
       updateEl.style.display = "";
       newVerEl.textContent = info.latest;
-      updateLink.href = info.url || info.downloadUrl || "";
+      // 安全校验：仅允许 https 链接，防止 javascript:/data: 等危险协议 (CWE-79)
+      const rawUrl = info.url || info.downloadUrl || "";
+      try {
+        const parsed = new URL(rawUrl);
+        updateLink.href = (parsed.protocol === "https:") ? rawUrl : "";
+      } catch {
+        updateLink.href = "";
+      }
     }
   });
 
