@@ -975,8 +975,10 @@ function escapeHtml(s) {
                 };
                 
                 // 检查是否已经有相同内容（避免重复）
+                // 注意：addRecord 生成的 record 字段是 {id,site,url,reason,text,html,timestamp,capturedAt,preview}，
+                // 没有 .snapshot 字段；之前误写为 lastRecord.snapshot.text 会抛 TypeError。
                 const lastRecord = STORE.records[STORE.records.length - 1];
-                if (!lastRecord || lastRecord.snapshot.text !== snap.text) {
+                if (!lastRecord || lastRecord.text !== snap.text) {
                   addRecord('replace', snap);
                   debug('DeepSeek SSE: 已记录撤回', snap.text.substring(0, 50));
                 }
@@ -1012,7 +1014,7 @@ function escapeHtml(s) {
               source: 'deepseek-sse-close'
             };
             const lastRecord = STORE.records[STORE.records.length - 1];
-            if (!lastRecord || lastRecord.snapshot.text !== snap.text) {
+            if (!lastRecord || lastRecord.text !== snap.text) {
               addRecord('replace', snap);
             }
             accumulatedContent = '';
