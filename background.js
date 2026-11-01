@@ -40,7 +40,7 @@ async function safeStorageGet(keys) {
 
 // ---------- 角标 ----------
 const DEBUG = false;
-const debugLog = (...args) => { if (DEBUG) debugLog('[ai-recall-saver]', ...args); };
+const debugLog = (...args) => { if (DEBUG) console.log('[ai-recall-saver]', ...args); };
 
 function setBadge(count) {
   const text = count > 0 ? (count > 99 ? "99+" : String(count)) : "";
