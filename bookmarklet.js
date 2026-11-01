@@ -510,7 +510,10 @@
   function sanitizeHtml(html) {
     if (!html) return "";
     const template = document.createElement("template");
-    template.textContent = html;
+    // 必须用 innerHTML 把字符串解析进 template.content，
+    // 用 textContent 会把字符串放进主文档树的文本节点而不进 .content，
+    // 导致下面 querySelectorAll 找不到任何元素、净化为空，恢复块渲染空白。
+    template.innerHTML = html;
     const root = template.content;
     const dangerous = root.querySelectorAll("script, iframe, object, embed, form, base, link, meta, style");
     dangerous.forEach((el) => el.remove());
